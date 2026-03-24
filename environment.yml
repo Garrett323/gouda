@@ -1,0 +1,10 @@
+name: gouda
+channels:
+  - defaults
+dependencies:
+  - python=3.13
+  - numpy
+  - pandas
+  - scikit-learn
+  - maturin
+prefix: /home/tim/nas/conda_envs/gouda
