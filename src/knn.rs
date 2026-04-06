@@ -47,15 +47,20 @@ impl KnnImputer {
         Ok(slf)
     }
 
-    pub fn transform<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    pub fn transform<'py>(
+        &self,
+        py: Python<'py>,
+        data: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         // check if fitted
         if !self.is_fitted {
             return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
                 "Imputer is not fitted",
             )));
         }
+        let (data, nrows, _) = pyany_to_vec(py, data)?;
         // actual method
-        let imputed = self.brute_force();
+        let imputed = self.brute_force(&data, nrows);
         // return python object
         let array = ndarray::Array2::from_shape_vec((self.nrows, self.ncols), imputed)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
@@ -64,19 +69,22 @@ impl KnnImputer {
 }
 
 impl KnnImputer {
-    fn brute_force(&self) -> Vec<f64> {
-        let data = self.data.as_ref().unwrap();
-        let mut imputed = self.data.as_ref().unwrap().clone();
+    fn brute_force(&self, data: &[f64], nrows: usize) -> Vec<f64> {
+        let mut imputed = data.to_vec();
         for (i, n) in data.iter().enumerate() {
             if n.is_nan() {
                 // figure out point and impute
                 let row = i / self.ncols;
                 let col = i % self.ncols;
-                let mut distances = Vec::with_capacity(self.nrows);
-                for r in 0..self.nrows {
-                    distances.push(self.nan_euclid(&self[row], &self[r]));
+                let mut distances = Vec::with_capacity(nrows);
+                for r in 0..nrows {
+                    if r == row {
+                        distances.push(f64::MAX); // dont consider distance to self
+                    } else {
+                        distances.push(self.nan_euclid(&self[row], &self[r]));
+                    }
                 }
-                let mut indices: Vec<usize> = (0..self.nrows).collect();
+                let mut indices: Vec<usize> = (0..nrows).collect();
                 indices.sort_by(|&a, &b| distances[a].total_cmp(&distances[b]));
                 indices.truncate(self.k);
                 imputed[i] = self.average(&indices, col);
@@ -98,13 +106,17 @@ impl KnnImputer {
                 total += (x - y).powi(2);
             }
         }
-        total * ((self.ncols - nnans) as f64 / self.ncols as f64)
+        total * (self.ncols as f64 / (self.ncols - nnans) as f64)
     }
 
     // TODO:
     // Implement weighting schemes
     fn average(&self, indices: &[usize], col: usize) -> f64 {
-        0.0
+        let mut avg = 0.0;
+        for i in indices {
+            avg += self[*i][col] * (1.0 / self.k as f64);
+        }
+        avg
     }
 }
 
