@@ -9,4 +9,6 @@ name = "gouda"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = "0.27.0"
+ndarray = "0.17.2"
+numpy = "0.28.0"
+pyo3 = { version = "0.28", features = ["extension-module"] }
