@@ -1,11 +1,12 @@
 import numpy as np
 import time
 from sklearn.impute import KNNImputer
-from gouda import KnnImputer 
+from gouda import KnnImputer
+
 
 def test_t():
     data = np.random.rand(500, 5)
-    data[data < 0.10] = np.nan
+    data[data < 0.28] = np.nan
     # data[0,1] = np.nan
     # data[0,4] = np.nan
     # data[1,1] = np.nan
@@ -39,4 +40,5 @@ def test_t():
     elapsed_rs = sorted(times_rs)[N // 2]  # median
     elapsed_sk = sorted(times_sk)[N // 2]
 
-    assert elapsed_rs < elapsed_sk, f"Rust: {elapsed_rs}ns  sklearn: {elapsed_sk}ns"
+    assert elapsed_rs < elapsed_sk, f"Rust: {
+        elapsed_rs}ns  sklearn: {elapsed_sk}ns"
