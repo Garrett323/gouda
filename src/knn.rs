@@ -109,7 +109,7 @@ impl KnnImputer {
                 }
                 let mut indices: Vec<usize> = (0..nrows).collect();
                 // indices.sort_by(|&a, &b| distances[a].total_cmp(&distances[b]));
-                indices.sort_by(|&a, &b| distances[a].total_cmp(&distances[b]));
+                indices.sort_unstable_by(|&a, &b| distances[a].total_cmp(&distances[b]));
                 let avgs = self.average(&indices, &cols);
                 for (avg, c) in avgs.into_iter().zip(&cols) {
                     imputed[i + c - col] = avg;
