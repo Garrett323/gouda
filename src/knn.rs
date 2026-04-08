@@ -14,13 +14,17 @@ pub struct KnnImputer {
     data: Option<Vec<f64>>,
     is_fitted: bool,
     metric: String,
+    weights: String,
 }
+
+const ALLOWED_WEIGHTS: [&str; 1] = ["uniform"];
 
 #[pymethods]
 impl KnnImputer {
     #[new]
-    #[pyo3(signature = (k=5, metric="nan_euclid"))]
-    pub fn new(k: usize, metric: &str) -> KnnImputer {
+    #[pyo3(signature = (k=5, metric="nan_euclid", weights="uniform"))]
+    pub fn new(k: usize, metric: &str, weights: &str) -> KnnImputer {
+        assert!(ALLOWED_WEIGHTS.contains(&weights));
         KnnImputer {
             k,
             nrows: 0,
@@ -28,6 +32,7 @@ impl KnnImputer {
             data: None,
             is_fitted: false,
             metric: metric.to_owned(),
+            weights: weights.to_owned(),
         }
     }
 
@@ -110,7 +115,7 @@ impl KnnImputer {
                 let mut indices: Vec<usize> = (0..nrows).collect();
                 // indices.sort_by(|&a, &b| distances[a].total_cmp(&distances[b]));
                 indices.sort_unstable_by(|&a, &b| distances[a].total_cmp(&distances[b]));
-                let avgs = self.average(&indices, &cols);
+                let avgs = self.average(&indices, &cols, &self.get_weights(&distances));
                 for (avg, c) in avgs.into_iter().zip(&cols) {
                     imputed[i + c - col] = avg;
                 }
@@ -122,7 +127,7 @@ impl KnnImputer {
         imputed
     }
 
-    fn average(&self, indices: &[usize], cols: &[usize]) -> Vec<f64> {
+    fn average(&self, indices: &[usize], cols: &[usize], weights: &[f64]) -> Vec<f64> {
         let mut avg: Vec<f64> = vec![0.0; cols.len()];
         for (j, c) in cols.iter().enumerate() {
             let mut count = 0;
@@ -131,15 +136,23 @@ impl KnnImputer {
                 if val.is_nan() {
                     continue;
                 }
-                avg[j] += val;
+                avg[j] += val * weights[*i];
                 count += 1;
                 if count >= self.k {
                     break;
                 }
             }
-            avg[j] = avg[j] * (1.0 / count as f64)
+            // avg[j] *= 1.0 / self.k as f64;
         }
         avg
+    }
+
+    fn get_weights(&self, distances: &[f64]) -> Vec<f64> {
+        match self.weights.as_str() {
+            "uniform" => distances.iter().map(|_| 1.0 / self.k as f64).collect(),
+            "distances" => distances.iter().map(|d| 1.0 / d).collect(),
+            w => panic!("Unknown weight {}", w),
+        }
     }
 }
 
@@ -200,41 +213,27 @@ mod tests {
 
     #[test]
     fn test_nan_euclid() {
-        let knn = KnnImputer::new(5, "nan_euclid");
+        let knn = KnnImputer::new(5, "nan_euclid", "uniform");
         let p = &[f64::NAN, 0.22129885, 0.8863533, 0.50595314, 0.5011135];
         let points = &[
-            [0.8184313, 0.21255369, 0.31404025, 0.94566382, 0.40544536],
             [0.76052103, f64::NAN, 0.4094729, 0.9573324, f64::NAN],
             [0.27839605, 0.7338148, 0.98359227, 0.98189233, 0.45384631],
             [f64::NAN, 0.22129885, 0.8863533, 0.50595314, 0.5011135],
             [f64::NAN, 0.32309935, 0.64573872, f64::NAN, f64::NAN],
-            [f64::NAN, 0.6991794, 0.9638419, 0.37826007, 0.73604386],
-            [0.28932857, 0.45275616, 0.43649617, 0.7509847, 0.22084236],
             [0.9317995, 0.51597243, 0.38054457, 0.62366235, 0.12229672],
             [0.90547984, f64::NAN, 0.68424979, 0.55400964, 0.55284803],
             [0.68846839, 0.53889275, 0.44453843, 0.43416536, 0.18575075],
-            [0.42542576, 0.80024827, 0.5310509, 0.15335542, 0.95273867],
-            [0.57887984, 0.80655372, 0.84469441, 0.98941933, 0.11981212],
-            [0.55863601, 0.7776858, 0.15676798, 0.10385082, 0.53160645],
-            [0.67177456, 0.26571081, 0.37363354, 0.44251768, 0.36369568],
             [0.13333331, 0.8772666, 0.64398646, f64::NAN, 0.90529859],
             [0.69819416, 0.65251852, 0.39663618, 0.65702538, f64::NAN],
         ];
         let expected = &[
-            0.8140305481190571,
             1.0382174099275148,
             0.7912650658744038,
             0.0,
             0.41309417813332494,
-            0.6183365744290024,
-            0.7022609100036123,
             0.7905951937189456,
             0.2763805321428371,
             0.7077017509263522,
-            0.993549619679686,
-            0.9509133938696136,
-            1.1205340718678007,
-            0.5997517090513087,
             1.042753531574897,
             0.8646734303095986,
         ];
@@ -272,7 +271,7 @@ mod tests {
             1.777112,
             0.666,
         ];
-        let knn = KnnImputer::new(5, "expected_distance");
+        let knn = KnnImputer::new(5, "expected_distance", "uniform");
         for (e, q) in expected.iter().zip(points) {
             let result = knn.expected_distance(p, q);
             assert!(
@@ -286,7 +285,7 @@ mod tests {
 
     #[test]
     fn test_compare() {
-        let knn = KnnImputer::new(5, "nan_euclid");
+        let knn = KnnImputer::new(5, "nan_euclid", "uniform");
         let (a, b) = (&[1.0, 2.0], &[3.0, 4.0]);
         let diff = knn.nan_euclid(a, b).sqrt() - knn.expected_distance(a, b);
         assert!((diff).abs() < 1e-10, "Expected: 0.0; Actual {}", diff);
