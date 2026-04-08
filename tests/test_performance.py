@@ -46,11 +46,23 @@ def test_nans():
     print("data:\n", data)
     print("imputed:\n", imputed)
     assert not np.isnan(imputed).any(), "Imputed still has missing values"
+    imputed = RSKNN(metric="expected_distance").fit(data).transform(data)
+    assert not np.isnan(imputed).any(), "Imputed still has missing values"
 
 
 def test_isclose():
     data = np.random.rand(500, 50)
     data[data < 0.38] = np.nan
     imputed_rs = RSKNN().fit(data).transform(data)
+    imputed_sk = SKKNN().fit(data).transform(data)
+    assert not np.isclose(imputed_rs, imputed_sk).all(), "wrong distances"
+
+
+def test_ed():
+    data = np.random.rand(500, 50)
+    assert (data < 1.0).all()
+    assert (data >= 0.0).all()
+    data[data < 0.38] = np.nan
+    imputed_rs = RSKNN(metric="expected_distance").fit(data).transform(data)
     imputed_sk = SKKNN().fit(data).transform(data)
     assert not np.isclose(imputed_rs, imputed_sk).all(), "wrong distances"
