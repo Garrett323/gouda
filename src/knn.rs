@@ -79,12 +79,11 @@ impl KnnImputer {
                 let row = i / self.ncols;
                 let col = i % self.ncols;
                 let mut cols = Vec::with_capacity(20);
-                cols.push(col);
                 for j in col..self.ncols {
                     if i + j >= data.len() {
                         break;
                     }
-                    if data[i + j].is_nan() {
+                    if data[i + j - col].is_nan() {
                         cols.push(j);
                     }
                 }
