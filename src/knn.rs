@@ -149,30 +149,36 @@ impl KnnImputer {
     // write tests
     fn nan_euclid(&self, a: &[f64], b: &[f64]) -> f64 {
         let mut total = 0.0;
-        let mut nnans = 0;
+        let mut valid = 0;
         let ncols = a.len();
-        for (x, y) in a.iter().zip(b) {
-            if x.is_nan() || y.is_nan() {
-                nnans += 1;
-            } else {
-                total += (x - y).powi(2);
+        for i in 0..ncols {
+            let (x, y) = (a[i], b[i]);
+            if !(x.is_nan() || y.is_nan()) {
+                let d = x - y;
+                total += d * d;
+                valid += 1;
             }
         }
-        if nnans == ncols {
+        if valid == 0 {
             return f64::INFINITY;
         }
-        total * (ncols as f64 / (ncols - nnans) as f64)
+        total * (ncols as f64 / valid as f64)
     }
 
     fn expected_distance(&self, a: &[f64], b: &[f64]) -> f64 {
         let mut total = 0.0;
         let mut total_obs = 0.0;
-        for (x, y) in a.iter().zip(b) {
+        let ncols = a.len();
+        for i in 0..ncols {
+            let (x, y) = (a[i], b[i]);
             match (x.is_nan(), y.is_nan()) {
                 (true, true) => total += 0.333,
                 (true, false) => total += y.max(1.0 - y),
                 (false, true) => total += x.max(1.0 - x),
-                (false, false) => total_obs += (x - y).powi(2),
+                (false, false) => {
+                    let d = x - y;
+                    total_obs += d * d
+                }
             }
         }
         total + total_obs.sqrt()
