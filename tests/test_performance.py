@@ -35,7 +35,7 @@ def test_time():
     elapsed_rs = sorted(times_rs)[N // 2]  # median
     elapsed_sk = sorted(times_sk)[N // 2]
 
-    assert elapsed_rs < elapsed_sk, f"Rust: {
+    assert elapsed_rs < elapsed_sk * 0.5, f"Rust: {
         elapsed_rs}ns  sklearn: {elapsed_sk}ns"
 
 
@@ -55,7 +55,12 @@ def test_isclose():
     data[data < 0.38] = np.nan
     imputed_rs = RSKNN().fit(data).transform(data)
     imputed_sk = SKKNN().fit(data).transform(data)
-    assert not np.isclose(imputed_rs, imputed_sk).all(), "wrong distances"
+    print(data, "\n")
+    print(imputed_sk, "\n")
+    print(imputed_rs, "\n")
+    avg_dist = (imputed_sk - imputed_rs).sum() / data.size
+    assert np.isclose(imputed_rs, imputed_sk, atol=0.1).all(
+    ), f"wrong distances {avg_dist}"
 
 
 def test_ed():
