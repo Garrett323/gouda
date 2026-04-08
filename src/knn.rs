@@ -17,7 +17,7 @@ pub struct KnnImputer {
     weights: String,
 }
 
-const ALLOWED_WEIGHTS: [&str; 1] = ["uniform"];
+const ALLOWED_WEIGHTS: [&str; 2] = ["uniform", "distance"];
 
 #[pymethods]
 impl KnnImputer {
