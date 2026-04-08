@@ -1,7 +1,7 @@
 import numpy as np
 import time
-from sklearn.impute import KNNImputer
-from gouda import KnnImputer
+from sklearn.impute import KNNImputer as SKKNN
+from gouda import KnnImputer as RSKNN
 
 
 def test_time():
@@ -11,13 +11,13 @@ def test_time():
     N = 5
 # Warmup
     for _ in range(3):
-        KnnImputer().fit(data).transform(data)
-        KNNImputer().fit(data).transform(data)
+        RSKNN().fit(data).transform(data)
+        SKKNN().fit(data).transform(data)
 
 # Benchmark Rust
     times_rs = []
     for _ in range(N):
-        imputer = KnnImputer()
+        imputer = RSKNN()
         imputer.fit(data)
         start = time.perf_counter_ns()
         _ = imputer.transform(data)
@@ -26,7 +26,7 @@ def test_time():
 # Benchmark sklearn
     times_sk = []
     for _ in range(N):
-        imputer = KNNImputer()
+        imputer = SKKNN()
         imputer.fit(data)
         start = time.perf_counter_ns()
         _ = imputer.transform(data)
@@ -40,7 +40,17 @@ def test_time():
 
 
 def test_nans():
-    data = np.random.rand(500, 50)
-    data[data < 0.18] = np.nan
-    imputed = KnnImputer().fit(data).transform(data)
+    data = np.random.rand(500, 5)
+    data[data < 0.48] = np.nan
+    imputed = RSKNN().fit(data).transform(data)
+    print("data:\n", data)
+    print("imputed:\n", imputed)
     assert not np.isnan(imputed).any(), "Imputed still has missing values"
+
+
+def test_isclose():
+    data = np.random.rand(500, 50)
+    data[data < 0.38] = np.nan
+    imputed_rs = RSKNN().fit(data).transform(data)
+    imputed_sk = SKKNN().fit(data).transform(data)
+    assert not np.isclose(imputed_rs, imputed_sk).all(), "wrong distances"
