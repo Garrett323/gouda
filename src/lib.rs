@@ -1,6 +1,7 @@
 use pyo3::prelude::*;
 mod knn;
 mod mice;
+mod simple;
 mod utils;
 
 /// A Python module implemented in Rust.
@@ -12,6 +13,7 @@ mod gouda {
     fn init(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module.add_class::<knn::KnnImputer>()?;
         module.add_class::<mice::Mice>()?;
+        module.add_class::<simple::Simple>()?;
         Ok(())
     }
 }
