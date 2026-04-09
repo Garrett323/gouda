@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 
-maturin develop
 cargo test
-pytest tests
+maturin develop --release
+python -m pytest tests
