@@ -15,6 +15,7 @@ pub struct KnnImputer {
 }
 
 const ALLOWED_WEIGHTS: [&str; 2] = ["uniform", "distance"];
+const ALLOWED_METRICS: [&str; 2] = ["nan_euclid", "expected_distance"];
 
 #[pymethods]
 impl KnnImputer {
@@ -22,6 +23,7 @@ impl KnnImputer {
     #[pyo3(signature = (k=5, metric="nan_euclid", weights="uniform"))]
     pub fn new(k: usize, metric: &str, weights: &str) -> KnnImputer {
         assert!(ALLOWED_WEIGHTS.contains(&weights));
+        KnnImputer::sanity_check(&metric, &weights);
         KnnImputer {
             k,
             data: None,
@@ -147,6 +149,21 @@ impl KnnImputer {
             "uniform" => distances.iter().map(|_| 1.0 / self.k as f64).collect(),
             "distances" => distances.iter().map(|d| 1.0 / d).collect(),
             w => panic!("Unknown weight {}", w),
+        }
+    }
+
+    fn sanity_check(metric: &str, weights: &str) {
+        if !ALLOWED_WEIGHTS.contains(&weights) {
+            panic!(
+                "Please select a valid metric: [{:?}]\n{} is not supported",
+                ALLOWED_WEIGHTS, weights
+            );
+        }
+        if !ALLOWED_METRICS.contains(&metric) {
+            panic!(
+                "Please select a valid metric: [{:?}]\n{} is not supported",
+                ALLOWED_METRICS, metric
+            );
         }
     }
 }
