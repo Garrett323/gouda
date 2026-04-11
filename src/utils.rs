@@ -136,7 +136,7 @@ mod tests {
             0.39663618, 0.98189233, 0.62366235, 0.43416536, 0.1214414, 0.65702538, 0.45384631,
             0.12229672, 0.18575075, 0.90529859, 0.92424,
         ];
-        let transpose = Data::to_colmayor(data.nrows, data.ncols, colmayor);
+        let transpose = Data::transpose(data.nrows, data.ncols, colmayor);
 
         for i in 0..colmayor.len() {
             assert!((data.data_cols.as_ref().unwrap()[i] - colmayor[i]).abs() < 1e-10);
