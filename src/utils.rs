@@ -54,7 +54,7 @@ pub struct Data {
 
 impl Data {
     pub fn new(nrows: usize, ncols: usize, data: &[f64]) -> Data {
-        let data_cols = Data::to_colmayor(nrows, ncols, &data);
+        let data_cols = Data::transpose(nrows, ncols, &data);
         Data {
             nrows,
             ncols,
@@ -72,6 +72,16 @@ impl Data {
         }
     }
 
+    pub fn new_colmayor(nrows: usize, ncols: usize, data: &[f64]) -> Data {
+        let data_cols = Data::transpose(nrows, ncols, &data);
+        Data {
+            nrows,
+            ncols,
+            data: None,
+            data_cols: Some(data_cols),
+        }
+    }
+
     // fn iter(&self) -> std::slice::Iter<'_, f64> {
     //     match (self.data.as_ref(), self.data_cols.as_ref()) {
     //         (Some(v), None) => v.iter(),
@@ -81,7 +91,7 @@ impl Data {
     //     }
     // }
 
-    fn to_colmayor(nrows: usize, ncols: usize, data: &[f64]) -> Vec<f64> {
+    pub fn transpose(nrows: usize, ncols: usize, data: &[f64]) -> Vec<f64> {
         let mut columns = vec![0.0; data.len()];
         for c in 0..ncols {
             for r in 0..nrows {
@@ -118,7 +128,7 @@ mod tests {
     ];
 
     #[test]
-    fn test_tocolmayor() {
+    fn test_transpose() {
         let data = Data::new(5, 5, TEST_DATA);
         let colmayor = &[
             0.27839605, 0.9317995, 0.68846839, 0.13333331, 0.69819416, 0.7338148, 0.51597243,
@@ -126,9 +136,11 @@ mod tests {
             0.39663618, 0.98189233, 0.62366235, 0.43416536, 0.1214414, 0.65702538, 0.45384631,
             0.12229672, 0.18575075, 0.90529859, 0.92424,
         ];
+        let transpose = Data::to_colmayor(data.nrows, data.ncols, colmayor);
 
         for i in 0..colmayor.len() {
             assert!((data.data_cols.as_ref().unwrap()[i] - colmayor[i]).abs() < 1e-10);
+            assert!((data.data.as_ref().unwrap()[i] - transpose[i]).abs() < 1e-10);
         }
     }
 
