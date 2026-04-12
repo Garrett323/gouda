@@ -91,7 +91,7 @@ impl Data {
     //     }
     // }
 
-    pub fn transpose(nrows: usize, ncols: usize, data: &[f64]) -> Vec<f64> {
+    fn transpose(nrows: usize, ncols: usize, data: &[f64]) -> Vec<f64> {
         let mut columns = vec![0.0; data.len()];
         for c in 0..ncols {
             for r in 0..nrows {
@@ -113,6 +113,21 @@ impl Index<usize> for Data {
     fn index(&self, row: usize) -> &[f64] {
         let offset = row * self.ncols;
         &self.data.as_ref().unwrap()[offset..offset + self.ncols]
+    }
+}
+
+impl std::ops::Deref for Data {
+    type Target = [f64];
+
+    fn deref(&self) -> &Self::Target {
+        match (&self.data, &self.data_cols) {
+            (Some(v), _) => v,
+            (None, Some(v)) => {
+                println!("EEEE");
+                v
+            }
+            (None, None) => panic!("No data to return"),
+        }
     }
 }
 

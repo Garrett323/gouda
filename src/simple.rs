@@ -5,9 +5,11 @@ use pyo3::prelude::*;
 #[pyclass]
 pub struct Simple {
     sample_means: Option<Vec<f64>>,
-    sample_mode: Option<Vec<f64>>,
+    // sample_mode: Option<Vec<f64>>,// needed when implementing categoricals
     is_fitted: bool,
 }
+
+const NOT_FITTED_ERR: &str = "Imputer not fitted, please call fit first";
 
 #[pymethods]
 impl Simple {
@@ -15,7 +17,7 @@ impl Simple {
     pub fn new() -> Simple {
         Simple {
             sample_means: None,
-            sample_mode: None,
+            // sample_mode: None,
             is_fitted: false,
         }
     }
@@ -60,37 +62,99 @@ impl Simple {
     fn get_means(&self, data: &Data) -> Vec<f64> {
         let mut means = vec![0.0; data.ncols];
         for i in 0..data.ncols {
+            let mut nnans = 0.0;
             for entry in data.get_col(i) {
                 if entry.is_nan() {
+                    nnans += 1.0;
                     continue;
                 }
                 means[i] += entry;
             }
-            means[i] /= data.nrows as f64;
+            means[i] /= data.nrows as f64 - nnans;
         }
         means
     }
 
     fn impute(&self, data: &Data) -> Vec<f64> {
-        // TODO:
-        // check if rowmayor data is there and create if needed
-        // return imputed vec
-        data[0].to_vec()
+        let mut imputed = vec![0.0; data.nrows * data.ncols];
+        let collapsed: &[f64] = data;
+        for j in 0..data.nrows {
+            for i in 0..data.ncols {
+                let index = j * data.ncols + i;
+                if collapsed[index].is_nan() {
+                    imputed[index] = self.sample_means.as_ref().expect(NOT_FITTED_ERR)[i];
+                } else {
+                    imputed[index] = collapsed[index];
+                }
+            }
+        }
+        imputed
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*; // has access to everything, including private
+    use super::*;
+
+    #[test]
+    fn test_data() {
+        assert_eq!(
+            5 * 5,
+            DATA.len(),
+            "Expected: {} Actual {}",
+            DATA.len(),
+            5 * 5
+        );
+        assert_eq!(
+            EXPECTED.len(),
+            DATA.len(),
+            "Expected: {} Actual {}",
+            DATA.len(),
+            EXPECTED.len(),
+        );
+    }
+
+    #[test]
+    fn test_impute() {
+        let mut simple = Simple::new();
+        let data = Data::new(5, 5, DATA);
+        let imputed = simple.fit_impl(&data).impute(&data);
+        println!("Means: {:?}", simple.sample_means.as_ref().unwrap());
+        println!("Data: {:?}", DATA);
+        println!("Expected: {:?}", EXPECTED);
+        println!("Imputed: {:?}", imputed);
+        for (id, (exp, imp)) in EXPECTED.iter().zip(imputed).enumerate() {
+            let diff = exp - imp;
+            assert!(
+                diff.abs() < 1e-10,
+                "ID: {} Expected: {}; Actual {}\n",
+                id,
+                exp,
+                imp
+            );
+        }
+    }
 
     #[test]
     fn test_means() {
+        const MEANS: &[f64] = &[
+            (0.76052103 + 0.27839605 + 0.9317995) / 3.0,
+            (0.7338148 + 0.22129885 + 0.32309935 + 0.51597243) / 4.0,
+            (0.4094729 + 0.98359227 + 0.8863533 + 0.64573872 + 0.38054457) / 5.0,
+            (0.9573324 + 0.98189233 + 0.50595314 + 0.62366235) / 4.0,
+            (0.45384631 + 0.5011135 + 0.12229672) / 3.0,
+        ];
         let mut simple = Simple::new();
-        let data = Data::new_colmayor(5, 5, DATA);
-        let imputed = simple.fit_impl(&data).impute(&data);
-        for (exp, imp) in EXPECTED.iter().zip(imputed) {
-            let diff = exp - imp;
-            assert!(diff.abs() < 1e-10, "Expected: {}; Actual {}\n", exp, imp);
+        let data = Data::new(5, 5, DATA);
+        simple.fit_impl(&data);
+        for (gt, estimate) in MEANS.iter().zip(simple.sample_means.as_ref().unwrap()) {
+            let diff = gt - estimate;
+            assert!(
+                diff.abs() < 1e-10,
+                "Expected: {}; Actual {}\n",
+                gt,
+                estimate
+            );
         }
     }
 
@@ -120,36 +184,32 @@ mod tests {
         0.38054457,
         0.62366235,
         0.12229672,
-        0.90547984,
-        f64::NAN,
-        0.68424979,
-        0.55400964,
-        0.55284803,
-        0.68846839,
-        0.53889275,
-        0.44453843,
-        0.43416536,
-        0.18575075,
-        0.13333331,
-        0.8772666,
-        0.64398646,
-        f64::NAN,
-        0.90529859,
-        0.69819416,
-        0.65251852,
-        0.39663618,
-        0.65702538,
-        f64::NAN,
     ];
     const EXPECTED: &[f64] = &[
-        1.0382174099275148,
-        0.7912650658744038,
-        0.0,
-        0.41309417813332494,
-        0.7905951937189456,
-        0.2763805321428371,
-        0.7077017509263522,
-        1.042753531574897,
-        0.8646734303095986,
+        0.76052103,
+        (0.7338148 + 0.22129885 + 0.32309935 + 0.51597243) / 4.0,
+        0.4094729,
+        0.9573324,
+        (0.45384631 + 0.5011135 + 0.12229672) / 3.0,
+        0.27839605,
+        0.7338148,
+        0.98359227,
+        0.98189233,
+        0.45384631,
+        (0.76052103 + 0.27839605 + 0.9317995) / 3.0,
+        0.22129885,
+        0.8863533,
+        0.50595314,
+        0.5011135,
+        (0.76052103 + 0.27839605 + 0.9317995) / 3.0,
+        0.32309935,
+        0.64573872,
+        (0.9573324 + 0.98189233 + 0.50595314 + 0.62366235) / 4.0,
+        (0.45384631 + 0.5011135 + 0.12229672) / 3.0,
+        0.9317995,
+        0.51597243,
+        0.38054457,
+        0.62366235,
+        0.12229672,
     ];
 }
