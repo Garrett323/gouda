@@ -1,4 +1,5 @@
 use pyo3::prelude::*;
+mod constant;
 mod knn;
 mod mice;
 mod simple;
@@ -13,7 +14,8 @@ mod gouda {
     fn init(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module.add_class::<knn::KnnImputer>()?;
         module.add_class::<mice::Mice>()?;
-        module.add_class::<simple::Simple>()?;
+        module.add_class::<simple::SimpleImputer>()?;
+        module.add_class::<constant::ConstantImputer>()?;
         Ok(())
     }
 }

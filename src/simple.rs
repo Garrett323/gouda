@@ -1,21 +1,19 @@
-use crate::utils::{Data, pyany_to_vec};
+use crate::utils::{Data, NOT_FITTED_ERR, pyany_to_vec};
 use numpy::{IntoPyArray, PyArray2};
 use pyo3::prelude::*;
 
 #[pyclass]
-pub struct Simple {
+pub struct SimpleImputer {
     sample_means: Option<Vec<f64>>,
     // sample_mode: Option<Vec<f64>>,// needed when implementing categoricals
     is_fitted: bool,
 }
 
-const NOT_FITTED_ERR: &str = "Imputer not fitted, please call fit first";
-
 #[pymethods]
-impl Simple {
+impl SimpleImputer {
     #[new]
-    pub fn new() -> Simple {
-        Simple {
+    pub fn new() -> SimpleImputer {
+        SimpleImputer {
             sample_means: None,
             // sample_mode: None,
             is_fitted: false,
@@ -41,7 +39,8 @@ impl Simple {
         // check if fitted
         if !self.is_fitted {
             return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
-                "Imputer is not fitted",
+                "{}",
+                NOT_FITTED_ERR
             )));
         }
         let (vec, nrows, ncols) = pyany_to_vec(py, data)?;
@@ -53,7 +52,7 @@ impl Simple {
     }
 }
 
-impl Simple {
+impl SimpleImputer {
     fn fit_impl(&mut self, data: &Data) -> &Self {
         let means = self.get_means(&data);
         self.sample_means = Some(means);
@@ -116,7 +115,7 @@ mod tests {
 
     #[test]
     fn test_impute() {
-        let mut simple = Simple::new();
+        let mut simple = SimpleImputer::new();
         let data = Data::new(5, 5, DATA);
         let imputed = simple.fit_impl(&data).impute(&data);
         println!("Means: {:?}", simple.sample_means.as_ref().unwrap());
@@ -144,7 +143,7 @@ mod tests {
             (0.9573324 + 0.98189233 + 0.50595314 + 0.62366235) / 4.0,
             (0.45384631 + 0.5011135 + 0.12229672) / 3.0,
         ];
-        let mut simple = Simple::new();
+        let mut simple = SimpleImputer::new();
         let data = Data::new(5, 5, DATA);
         simple.fit_impl(&data);
         for (gt, estimate) in MEANS.iter().zip(simple.sample_means.as_ref().unwrap()) {

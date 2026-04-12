@@ -3,6 +3,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use std::ops::Index;
 
+pub const NOT_FITTED_ERR: &str = "Imputer not fitted, please call fit first";
 const SUPPORTED_TYPES: &str = "numpy.ndarray, pandas.DataFrame";
 
 pub fn pyany_to_vec(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<(Vec<f64>, usize, usize)> {
@@ -80,6 +81,10 @@ impl Data {
             data: None,
             data_cols: Some(data_cols),
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.ncols * self.nrows
     }
 
     // fn iter(&self) -> std::slice::Iter<'_, f64> {
