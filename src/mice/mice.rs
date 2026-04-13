@@ -1,3 +1,5 @@
+use super::linear_regression;
+use crate::simple::SimpleImputer;
 use crate::utils::{Data, pyany_to_vec};
 use numpy::{IntoPyArray, PyArray2};
 use pyo3::prelude::*;
@@ -53,6 +55,12 @@ impl Mice {
 }
 
 impl Mice {
+    fn impute(&self, data: &Data) {
+        // initial mean imputation
+        let imputed = SimpleImputer::new().fit_impl(&data).impute(&data);
+        for i in 0..self.n_iterations {}
+    }
+
     fn solve(&self, data: &Data) {
         data.get_col(0);
     }

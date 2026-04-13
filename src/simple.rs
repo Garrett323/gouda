@@ -53,7 +53,7 @@ impl SimpleImputer {
 }
 
 impl SimpleImputer {
-    fn fit_impl(&mut self, data: &Data) -> &Self {
+    pub fn fit_impl(&mut self, data: &Data) -> &Self {
         let means = self.get_means(&data);
         self.sample_means = Some(means);
         return self;
@@ -74,7 +74,7 @@ impl SimpleImputer {
         means
     }
 
-    fn impute(&self, data: &Data) -> Vec<f64> {
+    pub fn impute(&self, data: &Data) -> Vec<f64> {
         let mut imputed = vec![0.0; data.nrows * data.ncols];
         let collapsed: &[f64] = data;
         for j in 0..data.nrows {
