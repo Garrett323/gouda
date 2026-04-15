@@ -18,6 +18,14 @@ impl ConstantImputer {
         }
     }
 
+    #[staticmethod]
+    pub fn zero() -> ConstantImputer {
+        ConstantImputer {
+            value: 0.0,
+            is_fitted: false,
+        }
+    }
+
     pub fn fit(slf: Py<Self>, py: Python<'_>, _data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
         {
             let mut inner = slf.borrow_mut(py);
