@@ -1,6 +1,7 @@
 use pyo3::prelude::*;
 mod constant;
 mod knn;
+mod matrix;
 mod mice;
 mod simple;
 mod utils;
