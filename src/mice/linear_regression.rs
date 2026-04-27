@@ -29,6 +29,9 @@ impl LinearRegression {
         let (nrows, ncols) = (data.len() / self.dim, self.dim);
         let m = Matrix::from_slice(data, nrows, ncols);
         let square = Matrix::from_slice(&m.square(), nrows, ncols);
+        // TODO:
+        // Implement matrix mult and LinearRegression
+
         // let nrows =
         // for i in 0..self.dim {
         //
