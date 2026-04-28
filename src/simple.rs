@@ -1,4 +1,4 @@
-use crate::utils::{Data, NOT_FITTED_ERR, pyany_to_vec};
+use crate::utils::{Data, constants::NOT_FITTED_ERR, pyany_to_vec};
 use numpy::{IntoPyArray, PyArray2};
 use pyo3::prelude::*;
 

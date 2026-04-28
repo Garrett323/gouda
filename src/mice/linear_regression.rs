@@ -1,4 +1,4 @@
-use crate::matrix::Matrix;
+use crate::utils::Matrix;
 
 struct LinearRegression {
     coefficients: Vec<f64>,
@@ -27,8 +27,7 @@ impl LinearRegression {
 
     pub fn fit(&self, data: &[f64], target: &[f64]) -> &LinearRegression {
         let (nrows, ncols) = (data.len() / self.dim, self.dim);
-        let m = Matrix::from_slice(data, nrows, ncols);
-        let square = Matrix::from_slice(&m.square(), nrows, ncols);
+        let m = Matrix::from_slice(data, nrows, ncols).square();
         // TODO:
         // Implement matrix mult and LinearRegression
 

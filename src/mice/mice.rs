@@ -1,4 +1,3 @@
-use super::linear_regression;
 use crate::simple::SimpleImputer;
 use crate::utils::{Data, pyany_to_vec};
 use numpy::{IntoPyArray, PyArray2};
