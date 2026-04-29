@@ -27,7 +27,7 @@ impl LinearRegression {
 
     pub fn fit(&self, data: &[f64], target: &[f64]) -> &LinearRegression {
         let (nrows, ncols) = (data.len() / self.dim, self.dim);
-        let m = Matrix::from_slice(data, nrows, ncols).square();
+        let m = Matrix::new(data, nrows, ncols).square();
         // TODO:
         // Implement matrix mult and LinearRegression
 
