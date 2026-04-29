@@ -6,8 +6,8 @@ def test_nans_simple():
     data = np.random.rand(500, 5)
     data[data < 0.48] = np.nan
     imputed = SimpleImputer().fit(data).transform(data)
-    print("data:\n", data)
-    print("imputed:\n", imputed)
+    print(f"data:\n", data)
+    print(f"imputed:\n{imputed}" )
     assert not np.isnan(imputed).any(), "Imputed still has missing values"
 
 

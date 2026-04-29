@@ -9,10 +9,14 @@ pub struct Matrix {
 }
 
 impl Matrix {
-    pub fn new(m: &[f64], nrows: usize, ncols: usize) -> Matrix {
+    pub fn new<T>(v: T, nrows: usize, ncols: usize) -> Matrix
+    where
+        T: Into<Rc<[f64]>>,
+    {
+        let values = v.into();
         let len = nrows * ncols;
         Matrix {
-            values: Rc::from(m),
+            values,
             nrows,
             ncols,
             stride: [ncols, 1],
@@ -51,7 +55,7 @@ impl Matrix {
                 product[col * self.ncols + row] = v;
             }
         }
-        Matrix::new(&product, self.ncols, self.ncols)
+        Matrix::new(product, self.ncols, self.ncols)
     }
 
     pub fn svd(&self) -> (Matrix, Matrix, Matrix) {
@@ -83,27 +87,6 @@ impl Matrix {
     }
 }
 
-impl std::ops::Mul for &Matrix {
-    type Output = Matrix;
-
-    fn mul(self, other: &Matrix) -> Self::Output {
-        if self.ncols != other.nrows {
-            panic!("Shape Mismatch!");
-        }
-        let mut product = vec![0.0; self.nrows * other.ncols];
-        for row in 0..self.nrows {
-            for col in 0..other.ncols {
-                // let a = &lvalues[row * self.ncols..(row + 1) * self.ncols];
-                let a = (0..self.ncols).map(|i| self.values[self._idx(row, i)]);
-                let b = (0..self.ncols).map(|i| other.values[other._idx(i, col)]);
-                let v: f64 = a.zip(b).map(|(x, y)| x * y).sum();
-                product[row * self.nrows + col] = v;
-            }
-        }
-        Matrix::new(&product, self.nrows, other.ncols)
-    }
-}
-
 impl std::fmt::Display for Matrix {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "[")?;
@@ -126,11 +109,40 @@ impl std::fmt::Display for Matrix {
     }
 }
 
-impl std::ops::Mul for Matrix {
+impl std::ops::Mul for &Matrix {
+    type Output = Matrix;
+
+    fn mul(self, other: &Matrix) -> Self::Output {
+        if self.ncols != other.nrows {
+            panic!("Shape Mismatch!");
+        }
+        let mut product = vec![0.0; self.nrows * other.ncols];
+        for row in 0..self.nrows {
+            for col in 0..other.ncols {
+                // let a = &lvalues[row * self.ncols..(row + 1) * self.ncols];
+                let a = (0..self.ncols).map(|i| self.values[self._idx(row, i)]);
+                let b = (0..self.ncols).map(|i| other.values[other._idx(i, col)]);
+                let v: f64 = a.zip(b).map(|(x, y)| x * y).sum();
+                product[row * self.nrows + col] = v;
+            }
+        }
+        Matrix::new(product, self.nrows, other.ncols)
+    }
+}
+
+impl std::ops::Mul<Matrix> for Matrix {
     type Output = Matrix;
 
     fn mul(self, other: Matrix) -> Self::Output {
         &self * &other
+    }
+}
+impl std::ops::Mul<f64> for &Matrix {
+    type Output = Matrix;
+
+    fn mul(self, other: f64) -> Self::Output {
+        let v: Vec<f64> = self.values.iter().map(|x| x * other).collect();
+        Matrix::new(v, self.nrows, self.ncols)
     }
 }
 
@@ -146,7 +158,7 @@ impl std::ops::Add for &Matrix {
         }
         let (lvalues, rvalues) = (self.as_slice(), other.as_slice());
         let sum: Vec<f64> = lvalues.iter().zip(rvalues).map(|(x, y)| x + y).collect();
-        Matrix::new(&sum, self.nrows, other.ncols)
+        Matrix::new(sum, self.nrows, other.ncols)
     }
 }
 
@@ -159,7 +171,7 @@ impl std::ops::Deref for Matrix {
 }
 
 #[cfg(test)]
-mod tests {
+mod test {
     use super::*;
     const TEST_SQUARE: &[f64] = &[1.0, 1.0, 2.0, 2.0, 3.0, 3.0];
     const TEST_SQUARE_T: &[f64] = &[1.0, 2.0, 3.0, 1.0, 2.0, 3.0];
@@ -170,7 +182,7 @@ mod tests {
     // const INV_FACTOR: f64 = 1.0 / 392.0;
 
     #[test]
-    fn test_square() {
+    fn square() {
         let m = Matrix::new(TEST_SQUARE, 3, 2).square();
         let square = m.as_slice();
         assert!(
@@ -189,7 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn test_square_transpose() {
+    fn square_transpose() {
         let m = Matrix::new(TEST_SQUARE, 3, 2);
         let t = m.tr();
         println!("{m}\n{t}");
@@ -210,7 +222,7 @@ mod tests {
     }
 
     #[test]
-    fn test_mult() {
+    fn mult() {
         let m = &Matrix::new(TEST_SQUARE, 3, 2) * &Matrix::new(TEST_SQUARE_T, 2, 3);
         let prod = m.as_slice();
         assert!(prod.len() == 9, "Not the right shape! {}", prod.len());
@@ -225,7 +237,7 @@ mod tests {
     }
 
     #[test]
-    fn test_transpose_mult() {
+    fn transpose_mult() {
         let m = &Matrix::new(TEST_SQUARE, 3, 2) * &Matrix::new(TEST_SQUARE, 3, 2).tr();
         let prod = m.as_slice();
         assert!(prod.len() == 9, "Not the right shape! {}", prod.len());
@@ -240,7 +252,7 @@ mod tests {
     }
 
     #[test]
-    fn test_transpose() {
+    fn transpose() {
         let m = Matrix::new(TEST_SQUARE, 3, 2).tr();
         assert!((m.stride[0] == 1) && (m.stride[1] == 2), "{:?}", m.stride);
         let tr = m.as_slice();
@@ -264,13 +276,13 @@ mod tests {
         }
     }
     #[test]
-    fn test_nonsymmetric_mult() {
+    fn nonsymmetric_mult() {
         // A (3x2):        B (2x3):
         // [1, 0]          [1, 2, 3]
         // [0, 1]          [4, 5, 6]
         // [0, 0]
-        let a = Matrix::new(&[1.0, 0.0, 0.0, 1.0, 0.0, 0.0], 3, 2);
-        let b = Matrix::new(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3);
+        let a = Matrix::new([1.0, 0.0, 0.0, 1.0, 0.0, 0.0], 3, 2);
+        let b = Matrix::new([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3);
         let m = &a * &b;
 
         // Expected: [[1,2,3],[4,5,6],[0,0,0]]

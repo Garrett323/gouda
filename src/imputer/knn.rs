@@ -213,7 +213,7 @@ mod tests {
     use super::*; // has access to everything, including private
 
     #[test]
-    fn test_nan_euclid() {
+    fn nan_euclid() {
         let knn = KnnImputer::new(5, "nan_euclid", "uniform");
         let p = &[f64::NAN, 0.22129885, 0.8863533, 0.50595314, 0.5011135];
 
@@ -228,7 +228,7 @@ mod tests {
         }
     }
     #[test]
-    fn test_expected_distance() {
+    fn expected_distance() {
         let p = &[f64::NAN, 0.555556, f64::NAN, 0.555556];
         let points = &[
             [0.0, 0.777778, 0.0, 0.777778],
@@ -263,7 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compare() {
+    fn compare() {
         let knn = KnnImputer::new(5, "nan_euclid", "uniform");
         let (a, b) = (&[1.0, 2.0], &[3.0, 4.0]);
         let diff = knn.nan_euclid(a, b).sqrt() - knn.expected_distance(a, b);

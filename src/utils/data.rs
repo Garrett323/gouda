@@ -102,7 +102,7 @@ mod tests {
     ];
 
     #[test]
-    fn test_transpose() {
+    fn transpose() {
         let data = Data::new(5, 5, TEST_DATA);
         let colmayor = &[
             0.27839605, 0.9317995, 0.68846839, 0.13333331, 0.69819416, 0.7338148, 0.51597243,
@@ -119,7 +119,7 @@ mod tests {
     }
 
     #[test]
-    fn test_getcol() {
+    fn getcol() {
         assert!(true);
     }
 }

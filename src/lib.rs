@@ -1,8 +1,5 @@
 use pyo3::prelude::*;
-mod constant;
-mod knn;
-mod mice;
-mod simple;
+mod imputer;
 mod utils;
 
 /// A Python module implemented in Rust.
@@ -12,10 +9,10 @@ mod gouda {
 
     #[pymodule_init]
     fn init(module: &Bound<'_, PyModule>) -> PyResult<()> {
-        module.add_class::<knn::KnnImputer>()?;
-        module.add_class::<mice::Mice>()?;
-        module.add_class::<simple::SimpleImputer>()?;
-        module.add_class::<constant::ConstantImputer>()?;
+        module.add_class::<imputer::KnnImputer>()?;
+        module.add_class::<imputer::Mice>()?;
+        module.add_class::<imputer::SimpleImputer>()?;
+        module.add_class::<imputer::ConstantImputer>()?;
         Ok(())
     }
 }

@@ -1,21 +1,21 @@
-use crate::simple::SimpleImputer;
+use crate::imputer::SimpleImputer;
 use crate::utils::{Data, pyany_to_vec};
 use numpy::{IntoPyArray, PyArray2};
 use pyo3::prelude::*;
 
 #[pyclass]
 pub struct Mice {
-    n_iterations: usize,
+    _n_iterations: usize,
     is_fitted: bool,
 }
 
 #[pymethods]
 impl Mice {
     #[new]
-    #[pyo3(signature = (n_iterations=15))]
-    pub fn new(n_iterations: usize) -> Mice {
+    #[pyo3(signature = (_n_iterations=15))]
+    pub fn new(_n_iterations: usize) -> Mice {
         Mice {
-            n_iterations,
+            _n_iterations,
             is_fitted: false,
         }
     }
@@ -54,10 +54,10 @@ impl Mice {
 }
 
 impl Mice {
-    fn impute(&self, data: &Data) {
+    fn _impute(&self, data: &Data) {
         // initial mean imputation
-        let imputed = SimpleImputer::new().fit_impl(&data).impute(&data);
-        for i in 0..self.n_iterations {}
+        let _imputed = SimpleImputer::new().fit_impl(&data).impute(&data);
+        for _i in 0..self._n_iterations {}
     }
 
     fn solve(&self, data: &Data) {
