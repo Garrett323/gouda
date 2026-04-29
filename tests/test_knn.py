@@ -25,8 +25,7 @@ def test_time():
 # Benchmark sklearn
     times_sk = []
     for _ in range(N):
-        imputer = SKKNN()
-        imputer.fit(data)
+        imputer = SKKNN().fit(data)
         start = time.perf_counter_ns()
         _ = imputer.transform(data)
         times_sk.append(time.perf_counter_ns() - start)
