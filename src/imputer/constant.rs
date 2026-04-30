@@ -1,4 +1,4 @@
-use crate::utils::{Data, constants::NOT_FITTED_ERR, pyany_to_vec};
+use crate::utils::{Matrix, constants::NOT_FITTED_ERR, pyany_to_vec};
 use numpy::{IntoPyArray, PyArray2};
 use pyo3::prelude::*;
 
@@ -47,7 +47,7 @@ impl ConstantImputer {
             )));
         }
         let (vec, nrows, ncols) = pyany_to_vec(py, data)?;
-        let imputed = self.impute(&Data::new_rowmayor(nrows, ncols, &vec));
+        let imputed = self.impute(&Matrix::new(vec, nrows, ncols));
         // return python object
         let array = ndarray::Array2::from_shape_vec((nrows, ncols), imputed)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
@@ -56,7 +56,7 @@ impl ConstantImputer {
 }
 
 impl ConstantImputer {
-    fn impute(&self, data: &Data) -> Vec<f64> {
+    fn impute(&self, data: &Matrix) -> Vec<f64> {
         let data: &[f64] = data;
         let mut imputed = vec![self.value; data.len()];
         for (i, e) in data.iter().enumerate() {
@@ -75,7 +75,7 @@ mod tests {
     #[test]
     fn test_impute() {
         let imputer = ConstantImputer::new(7.0);
-        let data = Data::new(5, 5, DATA);
+        let data = Matrix::new(DATA.to_vec(), 5, 5);
         let imputed = imputer.impute(&data);
         for i in 0..DATA.len() {
             if DATA[i].is_nan() {

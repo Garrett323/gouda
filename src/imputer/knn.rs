@@ -1,4 +1,4 @@
-use crate::utils::{Data, pyany_to_vec};
+use crate::utils::{Matrix, pyany_to_vec};
 use core::f64;
 use numpy::{IntoPyArray, PyArray2};
 use pyo3::prelude::*;
@@ -8,7 +8,7 @@ use pyo3::types::PyAny;
 pub struct KnnImputer {
     #[pyo3(get, set)]
     k: usize,
-    data: Option<Data>,
+    data: Option<Matrix>,
     is_fitted: bool,
     metric: String,
     weights: String,
@@ -37,7 +37,7 @@ impl KnnImputer {
         let (vec, nrows, ncols) = pyany_to_vec(py, data)?;
         {
             let mut inner = slf.borrow_mut(py);
-            inner.data = Some(Data::new_rowmayor(nrows, ncols, &vec));
+            inner.data = Some(Matrix::new(vec, nrows, ncols));
             inner.is_fitted = true;
         } // dropping inner here (releasing the mutex)
         Ok(slf)
@@ -101,12 +101,12 @@ impl KnnImputer {
                     }
                 }
                 let mut distances = Vec::with_capacity(nrows);
-                let p = &base[row];
+                let p = &base.row(row);
                 for r in 0..base.nrows {
                     if r == row {
                         distances.push(f64::MAX); // dont consider distance to self
                     } else {
-                        distances.push(dist(&self, p, &base[r]));
+                        distances.push(dist(&self, p, &base.row(r)));
                     }
                 }
                 let mut indices: Vec<usize> = (0..nrows).collect();
@@ -130,7 +130,7 @@ impl KnnImputer {
         for (j, c) in cols.iter().enumerate() {
             let mut count = 0;
             for i in indices {
-                let val = base[*i][*c];
+                let val = base.row(*i)[*c];
                 if val.is_nan() {
                     continue;
                 }

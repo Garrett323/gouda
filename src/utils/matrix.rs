@@ -1,32 +1,29 @@
-use std::rc::Rc;
+use std::sync::Arc;
+mod col;
+pub use col::*;
 
 pub struct Matrix {
-    values: Rc<[f64]>,
-    nrows: usize,
-    ncols: usize,
+    values: Arc<[f64]>,
+    pub nrows: usize,
+    pub ncols: usize,
     stride: [usize; 2],
-    len: usize,
 }
 
 impl Matrix {
-    pub fn new<T>(v: T, nrows: usize, ncols: usize) -> Matrix
+    pub fn new<T>(values: T, nrows: usize, ncols: usize) -> Matrix
     where
-        T: Into<Rc<[f64]>>,
+        T: Into<Arc<[f64]>>,
     {
-        let values = v.into();
-        let len = nrows * ncols;
         Matrix {
-            values,
+            values: values.into(),
             nrows,
             ncols,
             stride: [ncols, 1],
-            len,
         }
     }
 
     pub fn eye(nrows: usize, ncols: usize) -> Matrix {
-        let len = nrows * ncols;
-        let mut v = vec![0.0; len];
+        let mut v = vec![0.0; nrows * ncols];
         let mut count = 0;
         for i in 0..v.len() {
             if i % ncols == count {
@@ -35,11 +32,10 @@ impl Matrix {
             }
         }
         Matrix {
-            values: Rc::from(v),
+            values: Arc::from(v),
             nrows,
             ncols,
             stride: [ncols, 1],
-            len,
         }
     }
 
@@ -59,6 +55,9 @@ impl Matrix {
     }
 
     pub fn svd(&self) -> (Matrix, Matrix, Matrix) {
+        self.col(1);
+        let u = self * &self.tr();
+        let v = &self.tr() * self;
         (Matrix::eye(2, 2), Matrix::eye(2, 2), Matrix::eye(2, 2))
     }
 
@@ -68,12 +67,39 @@ impl Matrix {
 
     pub fn transpose(&self) -> Self {
         Matrix {
-            values: Rc::clone(&self.values),
+            values: Arc::clone(&self.values),
             nrows: self.ncols,
             ncols: self.nrows,
             stride: [1, self.ncols],
-            len: self.len,
         }
+    }
+
+    pub fn det(&self) -> f64 {
+        assert!(false, "TODO implement");
+        0.0
+    }
+
+    pub fn eigen(&self) -> Vec<f64> {
+        assert!(false, "TODO implement");
+        vec![0.0]
+    }
+
+    fn bidiag(&self) {
+        let u = Matrix::eye(self.nrows, self.nrows);
+        let v = Matrix::eye(self.ncols, self.ncols);
+        for k in 0..std::cmp::min(self.nrows, self.ncols) {
+            let c = self.col(k);
+            c.outer(&c);
+        }
+    }
+
+    pub fn col(&self, index: usize) -> ColView<'_> {
+        // life time is need. the owning object cant be dropped while the view is alive
+        ColView::new(&self.values, index, self.ncols, self.nrows)
+    }
+
+    pub fn row(&self, id: usize) -> &[f64] {
+        &self.values[id * self.ncols..id * self.ncols + self.ncols]
     }
 
     #[inline(always)]
@@ -84,6 +110,20 @@ impl Matrix {
     #[inline(always)]
     fn _idx(&self, row: usize, col: usize) -> usize {
         row * self.stride[0] + col * self.stride[1]
+    }
+
+    #[allow(dead_code)]
+    #[inline(always)]
+    fn len(&self) -> usize {
+        self.nrows * self.ncols
+    }
+}
+
+impl std::ops::Index<(usize, usize)> for Matrix {
+    type Output = f64;
+
+    fn index(&self, index: (usize, usize)) -> &Self::Output {
+        &self.values[self._idx(index.0, index.1)]
     }
 }
 
@@ -207,9 +247,9 @@ mod test {
         println!("{m}\n{t}");
         let square = t.square();
         assert!(
-            square.len == TEST_T_SQUARE_RESULT.len(),
+            square.len() == TEST_T_SQUARE_RESULT.len(),
             "Not the right shape! {}",
-            square.len
+            square.len()
         );
         for (p, q) in square.as_slice().iter().zip(TEST_T_SQUARE_RESULT) {
             assert!(
