@@ -1,3 +1,6 @@
+// TODO:
+// Write mat mul Tests
+// Support slicing
 use crate::utils::Matrix;
 
 // View ----------------------------------------------------
@@ -119,13 +122,33 @@ pub trait VecLike: std::ops::Index<usize, Output = f64> {
         }
         Matrix::new(values, self.len(), self.len())
     }
+    fn mat_mul(&self, other: &Matrix) -> Matrix {
+        if other.nrows != self.len() {
+            panic!("Shape mismatch");
+        }
+        let values: Vec<f64> = (0..other.ncols)
+            .map(|row| (0..self.len()).map(|i| self[i] * other[(row, i)]).sum())
+            .collect();
+        Matrix::new(values, 1, other.ncols)
+    }
 }
 macro_rules! impl_mul_inner {
     ($lhs:ty, $rhs:ty) => {
         impl std::ops::Mul<&$rhs> for &$lhs {
             type Output = f64;
-            fn mul(self, rhs: &$rhs) -> f64 {
+            fn mul(self, rhs: &$rhs) -> Self::Output {
                 self.inner(rhs)
+            }
+        }
+    };
+}
+
+macro_rules! impl_mat_mul {
+    ($lhs:ty) => {
+        impl std::ops::Mul<&Matrix> for &$lhs {
+            type Output = Matrix;
+            fn mul(self, rhs: &Matrix) -> Self::Output {
+                self.mat_mul(rhs)
             }
         }
     };
@@ -135,6 +158,9 @@ impl_mul_inner!(ColView<'_>, ColView<'_>);
 impl_mul_inner!(ColVec, ColVec);
 impl_mul_inner!(ColView<'_>, ColVec);
 impl_mul_inner!(ColVec, ColView<'_>);
+
+impl_mat_mul!(ColVec);
+impl_mat_mul!(ColView<'_>);
 
 // Tests ----------------------------------------------------
 #[cfg(test)]

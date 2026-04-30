@@ -1,3 +1,6 @@
+// TODO:
+// Write mat mul Tests
+// implement svd transform
 use std::sync::Arc;
 mod col;
 pub use col::*;
@@ -56,8 +59,8 @@ impl Matrix {
 
     pub fn svd(&self) -> (Matrix, Matrix, Matrix) {
         self.col(1);
-        let u = self * &self.tr();
-        let v = &self.tr() * self;
+        let _u = self * &self.tr();
+        let _v = &self.tr() * self;
         (Matrix::eye(2, 2), Matrix::eye(2, 2), Matrix::eye(2, 2))
     }
 
@@ -84,14 +87,14 @@ impl Matrix {
         vec![0.0]
     }
 
-    fn bidiag(&self) {
-        let u = Matrix::eye(self.nrows, self.nrows);
-        let v = Matrix::eye(self.ncols, self.ncols);
-        for k in 0..std::cmp::min(self.nrows, self.ncols) {
-            let c = self.col(k);
-            c.outer(&c);
-        }
-    }
+    // fn bidiag(&self) {
+    //     let u = Matrix::eye(self.nrows, self.nrows);
+    //     let v = Matrix::eye(self.ncols, self.ncols);
+    //     for k in 0..std::cmp::min(self.nrows, self.ncols) {
+    //         let c = self.col(k);
+    //         c.outer(&c);
+    //     }
+    // }
 
     pub fn col(&self, index: usize) -> ColView<'_> {
         // life time is need. the owning object cant be dropped while the view is alive
@@ -118,6 +121,7 @@ impl Matrix {
         self.nrows * self.ncols
     }
 }
+// Traits and Operator Impl -----------------------------------------------------------------------------------------------------------------------------------------
 
 impl std::ops::Index<(usize, usize)> for Matrix {
     type Output = f64;
@@ -170,6 +174,22 @@ impl std::ops::Mul for &Matrix {
     }
 }
 
+impl<T> std::ops::Mul<&T> for &Matrix
+where
+    T: VecLike,
+{
+    type Output = Matrix;
+    fn mul(self, other: &T) -> Self::Output {
+        if self.ncols != other.len() {
+            panic!("Shape mismatch");
+        }
+        let values: Vec<f64> = (0..self.nrows)
+            .map(|row| (0..other.len()).map(|i| other[i] * self[(row, i)]).sum())
+            .collect();
+        Matrix::new(values, self.nrows, 1)
+    }
+}
+
 impl std::ops::Mul<Matrix> for Matrix {
     type Output = Matrix;
 
@@ -209,6 +229,9 @@ impl std::ops::Deref for Matrix {
         self.as_slice()
     }
 }
+
+// !Traits and Operator Impl -----------------------------------------------------------------------------------------------------------------------------------------
+// Tests -----------------------------------------------------------------------------------------------------------------------------------------
 
 #[cfg(test)]
 mod test {
