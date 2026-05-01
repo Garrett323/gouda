@@ -1,5 +1,6 @@
 use crate::imputer::SimpleImputer;
-use crate::utils::{Matrix, pyany_to_vec};
+use crate::utils::pyany_to_vec;
+use ndarray::Array2;
 use numpy::{IntoPyArray, PyArray2};
 use pyo3::prelude::*;
 
@@ -24,7 +25,7 @@ impl Mice {
         let (vec, nrows, ncols) = pyany_to_vec(py, data)?;
         {
             let mut inner = slf.borrow_mut(py);
-            inner.solve(&Matrix::new(vec, nrows, ncols));
+            inner.solve(&Array2::from_shape_vec((nrows, ncols), vec).unwrap());
             inner.is_fitted = true;
         } // dropping inner here (releasing the mutex)
         Ok(slf)
@@ -54,13 +55,13 @@ impl Mice {
 }
 
 impl Mice {
-    fn _impute(&self, data: &Matrix) {
+    fn _impute(&self, data: &Array2<f64>) {
         // initial mean imputation
         let _imputed = SimpleImputer::new().fit_impl(&data).impute(&data);
         for _i in 0..self._n_iterations {}
     }
 
-    fn solve(&self, data: &Matrix) {
-        data.col(0);
+    fn solve(&self, data: &Array2<f64>) {
+        data.column(0);
     }
 }

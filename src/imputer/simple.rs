@@ -1,4 +1,5 @@
-use crate::utils::{Matrix, VecLike, constants::NOT_FITTED_ERR, pyany_to_vec};
+use crate::utils::{constants::NOT_FITTED_ERR, pyany_to_vec};
+use ndarray::Array2;
 use numpy::{IntoPyArray, PyArray2};
 use pyo3::prelude::*;
 
@@ -24,7 +25,7 @@ impl SimpleImputer {
         let (vec, nrows, ncols) = pyany_to_vec(py, data)?;
         {
             let mut inner = slf.borrow_mut(py);
-            let data = Matrix::new(vec, nrows, ncols);
+            let data: Array2<f64> = Array2::from_shape_vec((nrows, ncols), vec).unwrap();
             inner.fit_impl(&data);
             inner.is_fitted = true;
         } // dropping inner here (releasing the mutex)
@@ -44,46 +45,45 @@ impl SimpleImputer {
             )));
         }
         let (vec, nrows, ncols) = pyany_to_vec(py, data)?;
-        let imputed = self.impute(&Matrix::new(vec, nrows, ncols));
+        let imputed = self.impute(&Array2::from_shape_vec((nrows, ncols), vec).unwrap());
         // return python object
-        let array = ndarray::Array2::from_shape_vec((nrows, ncols), imputed)
+        let array = Array2::from_shape_vec((nrows, ncols), imputed)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         Ok(array.into_pyarray(py))
     }
 }
 
 impl SimpleImputer {
-    pub fn fit_impl(&mut self, data: &Matrix) -> &Self {
+    pub fn fit_impl(&mut self, data: &Array2<f64>) -> &Self {
         let means = self.get_means(&data);
         self.sample_means = Some(means);
         return self;
     }
-    fn get_means(&self, data: &Matrix) -> Vec<f64> {
-        let mut means = vec![0.0; data.ncols];
-        for i in 0..data.ncols {
+    fn get_means(&self, data: &Array2<f64>) -> Vec<f64> {
+        let mut means = vec![0.0; data.shape()[1]];
+        for i in 0..data.shape()[1] {
             let mut nnans = 0.0;
-            for entry in data.col(i).iter() {
+            for entry in data.column(i).iter() {
                 if entry.is_nan() {
                     nnans += 1.0;
                     continue;
                 }
                 means[i] += entry;
             }
-            means[i] /= data.nrows as f64 - nnans;
+            means[i] /= data.shape()[0] as f64 - nnans;
         }
         means
     }
 
-    pub fn impute(&self, data: &Matrix) -> Vec<f64> {
-        let mut imputed = vec![0.0; data.nrows * data.ncols];
-        let collapsed: &[f64] = data;
-        for j in 0..data.nrows {
-            for i in 0..data.ncols {
-                let index = j * data.ncols + i;
-                if collapsed[index].is_nan() {
+    pub fn impute(&self, data: &Array2<f64>) -> Vec<f64> {
+        let mut imputed = vec![0.0; data.shape()[0] * data.shape()[1]];
+        for j in 0..data.shape()[0] {
+            for i in 0..data.shape()[1] {
+                let index = j * data.shape()[1] + i;
+                if data[(j, i)].is_nan() {
                     imputed[index] = self.sample_means.as_ref().expect(NOT_FITTED_ERR)[i];
                 } else {
-                    imputed[index] = collapsed[index];
+                    imputed[index] = data[(j, i)];
                 }
             }
         }
@@ -116,7 +116,7 @@ mod tests {
     #[test]
     fn test_impute() {
         let mut simple = SimpleImputer::new();
-        let data = Matrix::new(DATA.to_owned(), 5, 5);
+        let data = Array2::from_shape_vec((5, 5), DATA.to_owned()).unwrap();
         let imputed = simple.fit_impl(&data).impute(&data);
         println!("Means: {:?}", simple.sample_means.as_ref().unwrap());
         println!("Data: {:?}", DATA);
@@ -144,7 +144,7 @@ mod tests {
             (0.45384631 + 0.5011135 + 0.12229672) / 3.0,
         ];
         let mut simple = SimpleImputer::new();
-        let data = Matrix::new(DATA.to_owned(), 5, 5);
+        let data = Array2::from_shape_vec((5, 5), DATA.to_owned()).unwrap();
         simple.fit_impl(&data);
         for (gt, estimate) in MEANS.iter().zip(simple.sample_means.as_ref().unwrap()) {
             let diff = gt - estimate;

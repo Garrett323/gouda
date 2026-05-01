@@ -1,5 +1,5 @@
-use crate::utils::{Matrix, pyany_to_vec};
-use core::f64;
+use crate::utils::pyany_to_vec;
+use ndarray::Array2;
 use numpy::{IntoPyArray, PyArray2};
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
@@ -8,7 +8,7 @@ use pyo3::types::PyAny;
 pub struct KnnImputer {
     #[pyo3(get, set)]
     k: usize,
-    data: Option<Matrix>,
+    data: Option<Array2<f64>>,
     is_fitted: bool,
     metric: String,
     weights: String,
@@ -37,7 +37,7 @@ impl KnnImputer {
         let (vec, nrows, ncols) = pyany_to_vec(py, data)?;
         {
             let mut inner = slf.borrow_mut(py);
-            inner.data = Some(Matrix::new(vec, nrows, ncols));
+            inner.data = Some(Array2::from_shape_vec((nrows, ncols), vec).unwrap());
             inner.is_fitted = true;
         } // dropping inner here (releasing the mutex)
         Ok(slf)
@@ -88,10 +88,10 @@ impl KnnImputer {
         while i < data.len() {
             if data[i].is_nan() {
                 // figure out point and impute
-                let row = i / base.ncols;
-                let col = i % base.ncols;
+                let row = i / base.shape()[1];
+                let col = i % base.shape()[1];
                 let mut cols = Vec::with_capacity(20);
-                for j in col..base.ncols {
+                for j in col..base.shape()[1] {
                     let l = i + j - col;
                     if l >= data.len() {
                         break;
@@ -101,12 +101,16 @@ impl KnnImputer {
                     }
                 }
                 let mut distances = Vec::with_capacity(nrows);
-                let p = &base.row(row);
-                for r in 0..base.nrows {
+                let p = base.row(row);
+                for r in 0..base.shape()[0] {
                     if r == row {
                         distances.push(f64::MAX); // dont consider distance to self
                     } else {
-                        distances.push(dist(&self, p, &base.row(r)));
+                        distances.push(dist(
+                            &self,
+                            p.as_slice().unwrap(),
+                            &base.row(r).as_slice().unwrap(),
+                        ));
                     }
                 }
                 let mut indices: Vec<usize> = (0..nrows).collect();
@@ -116,7 +120,7 @@ impl KnnImputer {
                 for (avg, c) in avgs.into_iter().zip(&cols) {
                     imputed[i + c - col] = avg;
                 }
-                i += base.ncols - col;
+                i += base.shape()[1] - col;
             } else {
                 i += 1;
             }
