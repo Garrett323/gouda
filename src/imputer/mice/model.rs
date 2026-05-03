@@ -1,22 +1,32 @@
+use super::linear_regression::{Solver, SolverType};
 use crate::imputer::SimpleImputer;
 use crate::utils::pyany_to_vec;
 use ndarray::Array2;
 use numpy::{IntoPyArray, PyArray2};
 use pyo3::prelude::*;
+use std::sync::Arc;
 
 #[pyclass]
 pub struct Mice {
-    _n_iterations: usize,
+    n_iterations: usize,
+    backend: SolverType,
     is_fitted: bool,
 }
 
 #[pymethods]
 impl Mice {
     #[new]
-    #[pyo3(signature = (_n_iterations=15))]
-    pub fn new(_n_iterations: usize) -> Mice {
+    #[pyo3(signature = (n_iterations=15, backend="Linear"))]
+    pub fn new(n_iterations: usize, backend: &str) -> Mice {
+        let backend = match backend.to_lowercase().as_str() {
+            "linear" => SolverType::Linear,
+            "ridge" => SolverType::Ridge,
+            "bayesian" => SolverType::Bayesian,
+            _ => panic!("Solver {backend} not supported!"),
+        };
         Mice {
-            _n_iterations,
+            n_iterations,
+            backend: backend,
             is_fitted: false,
         }
     }
@@ -25,7 +35,7 @@ impl Mice {
         let (vec, nrows, ncols) = pyany_to_vec(py, data)?;
         {
             let mut inner = slf.borrow_mut(py);
-            inner.solve(&Array2::from_shape_vec((nrows, ncols), vec).unwrap());
+            // inner.solve(&Array2::from_shape_vec((nrows, ncols), vec).unwrap());
             inner.is_fitted = true;
         } // dropping inner here (releasing the mutex)
         Ok(slf)
@@ -58,10 +68,10 @@ impl Mice {
     fn _impute(&self, data: &Array2<f64>) {
         // initial mean imputation
         let _imputed = SimpleImputer::new().fit_impl(&data).impute(&data);
-        for _i in 0..self._n_iterations {}
+        for _i in 0..self.n_iterations {}
     }
 
-    fn solve(&self, data: &Array2<f64>) {
-        data.column(0);
-    }
+    // fn solve(&self, data: &Array2<f64>) {
+    //     data.column(0);
+    // }
 }

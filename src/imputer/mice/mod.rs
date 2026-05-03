@@ -1,3 +1,8 @@
 mod linear_regression;
-pub mod mice;
-pub use mice::Mice;
+mod model;
+pub use linear_regression::SolverType;
+pub use model::Mice;
+
+trait Solver {
+    fn solve();
+}
