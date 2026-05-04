@@ -12,3 +12,6 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dynamic = ["version"]
+
+description = "Imputation Library primarly written in Rust"
+readme = "readme.md"
