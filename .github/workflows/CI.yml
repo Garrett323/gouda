@@ -48,8 +48,8 @@ jobs:
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: "auto"
-        before-script-linux: |
-          dnf install -y cmake make gcc-gfortran openblas-devel openssl-devel pkg-config
+          before-script-linux: |
+            dnf install -y cmake make gcc-gfortran openblas-devel openssl-devel pkg-config
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
