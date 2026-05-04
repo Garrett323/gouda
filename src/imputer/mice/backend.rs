@@ -1,6 +1,9 @@
 use ndarray::{Array1, Array2, Axis};
 use ndarray_linalg::{LeastSquaresSvd, SVD};
 
+use rand::prelude::*;
+use std::sync::Mutex;
+
 pub trait Solver: Send + Sync {
     fn bias(&self) -> bool;
     fn coefficients(&self) -> &Option<Array1<f64>>;
@@ -15,6 +18,13 @@ pub trait Solver: Send + Sync {
         points.dot(weights)
     }
     fn clone(&self) -> Box<dyn Solver>;
+}
+
+pub struct PMM {
+    n_neighbors: usize,
+    pool: Option<Array1<f64>>,
+    model: Box<dyn Solver>,
+    rng: Mutex<rand::rngs::SmallRng>,
 }
 
 pub struct LinearRegression {
@@ -114,6 +124,88 @@ fn add_bias_column(x: &Array2<f64>) -> Array2<f64> {
     let mut out = Array2::ones((nrows, ncols + 1));
     out.slice_mut(ndarray::s![.., 1..]).assign(x);
     out
+}
+
+impl PMM {
+    pub fn new(n_neighbors: usize, backend: &str, alpha: Option<f64>) -> PMM {
+        let model = match backend.to_lowercase().as_str() {
+            "linear" => Box::new(LinearRegression::new()) as Box<dyn Solver>,
+            "ridge" => Box::new(Ridge::new(alpha.expect("Provide a Some(value) for alpha")))
+                as Box<dyn Solver>,
+            _ => panic!("Solver {backend} not supported!"),
+        };
+        PMM {
+            n_neighbors,
+            pool: None,
+            model: model,
+            rng: Mutex::new(rand::rngs::SmallRng::seed_from_u64(42)),
+        }
+    }
+
+    fn sample(&self, arr: &[f64]) -> f64 {
+        let mut rng = self.rng.lock().unwrap();
+        arr.choose(&mut rng).unwrap().clone()
+    }
+}
+
+impl Solver for PMM {
+    fn bias(&self) -> bool {
+        self.model.bias()
+    }
+    fn coefficients(&self) -> &Option<Array1<f64>> {
+        self.model.coefficients()
+    }
+    fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>) {
+        self.pool = Some(target.iter().filter(|e| !e.is_nan()).copied().collect());
+        self.model.fit(data, target);
+    }
+    fn clone(&self) -> Box<dyn Solver> {
+        let pool = if let Some(v) = &self.pool {
+            Some(v.clone())
+        } else {
+            None
+        };
+        let rng = Mutex::new(self.rng.lock().unwrap().clone());
+        Box::new(PMM {
+            n_neighbors: self.n_neighbors.clone(),
+            pool,
+            model: self.model.clone(),
+            rng,
+        }) as Box<dyn Solver>
+    }
+
+    fn predict(&self, points: &Array2<f64>) -> Array1<f64> {
+        let predictions = self.model.predict(points);
+        let mut samples = Array1::zeros(points.nrows());
+        let pool = self.pool.as_ref().expect("Call Fit before predict!");
+        for (i, p) in predictions.iter().enumerate() {
+            if self.n_neighbors >= pool.len() {
+                samples[i] = self.sample(&pool.to_vec());
+            } else {
+                let mut top_k: Vec<f64> = vec![f64::MAX; self.n_neighbors]; //Array1::ones(self.n_neighbors) * f64::MAX;
+                let distances: Array1<f64> = pool.iter().map(|x| (x - p).abs()).collect();
+                let (mut max_idx, mut max_val) = argmax(&top_k);
+                for (j, d) in distances.iter().enumerate() {
+                    if d < &(max_val - p).abs() {
+                        top_k[max_idx] = pool[j];
+                        (max_idx, max_val) = argmax(&top_k);
+                    }
+                }
+                top_k.retain(|&e| e < f64::MAX);
+                samples[i] = self.sample(&top_k);
+            }
+        }
+        samples
+    }
+}
+
+fn argmax(arr: &[f64]) -> (usize, f64) {
+    let (id, v) = arr
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .unwrap();
+    (id, v.clone())
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-use super::linear_regression::{LinearRegression, Ridge, Solver};
+use super::backend::{LinearRegression, PMM, Ridge, Solver};
 use crate::imputer::SimpleImputer;
 use crate::utils::pyany_to_vec;
 use ndarray::{Array1, Array2, Axis};
@@ -9,24 +9,25 @@ use pyo3::prelude::*;
 pub struct Mice {
     n_iterations: usize,
     backend: Box<dyn Solver>,
-    fitted: Vec<Box<dyn Solver>>,
+    models: Vec<Box<dyn Solver>>,
     is_fitted: bool,
 }
 
 #[pymethods]
 impl Mice {
     #[new]
-    #[pyo3(signature = (n_iterations=15, backend="linear", alpha=1.0))]
-    pub fn new(n_iterations: usize, backend: &str, alpha: f64) -> Mice {
+    #[pyo3(signature = (n_iterations=15, backend="pmm", alpha=1.0, pmm_backend="linear"))]
+    pub fn new(n_iterations: usize, backend: &str, alpha: f64, pmm_backend: &str) -> Mice {
         let backend = match backend.to_lowercase().as_str() {
             "linear" => Box::new(LinearRegression::new()) as Box<dyn Solver>,
             "ridge" => Box::new(Ridge::new(alpha)) as Box<dyn Solver>,
+            "pmm" => Box::new(PMM::new(5, pmm_backend, Some(alpha))) as Box<dyn Solver>,
             _ => panic!("Solver {backend} not supported!"),
         };
         Mice {
             n_iterations,
             backend: backend,
-            fitted: Vec::new(),
+            models: Vec::new(),
             is_fitted: false,
         }
     }
@@ -44,9 +45,6 @@ impl Mice {
         Ok(slf)
     }
 
-    // TODO:
-    // Does currently nothing
-    // implement stuff
     pub fn transform<'py>(
         &self,
         py: Python<'py>,
@@ -69,6 +67,19 @@ impl Mice {
 }
 
 impl Mice {
+    #[allow(unused)]
+    fn linear(n_iterations: usize) -> Self {
+        Self::new(n_iterations, "linear", 0.0, "linear")
+    }
+    #[allow(unused)]
+    fn ridge(n_iterations: usize, alpha: f64) -> Self {
+        Self::new(n_iterations, "ridge", alpha, "linear")
+    }
+    #[allow(unused)]
+    fn pmm(n_iterations: usize) -> Self {
+        Self::new(n_iterations, "pmm", 1.0, "linear")
+    }
+
     fn impute(&self, data: &Array2<f64>) -> Array2<f64> {
         // initial mean imputation
         let mut imputed = SimpleImputer::new().fit_impl(&data).impute(&data);
@@ -76,7 +87,7 @@ impl Mice {
             for j in 0..data.shape()[1] {
                 let (_, x_test, _, missing_indices) = split(&imputed, data, j);
 
-                let predictions = self.fitted[j].predict(&x_test);
+                let predictions = self.models[j].predict(&x_test);
                 for (k, v) in predictions.iter().enumerate() {
                     imputed[[missing_indices[k], j]] = *v;
                 }
@@ -86,7 +97,7 @@ impl Mice {
     }
 
     fn fit_impl(&mut self, data: &Array2<f64>) -> &Self {
-        self.fitted = Vec::with_capacity(data.shape()[1]);
+        self.models = Vec::with_capacity(data.shape()[1]);
         let mut imputed = SimpleImputer::new().fit_impl(&data).impute(&data);
         for i in 0..self.n_iterations {
             for j in 0..data.shape()[1] {
@@ -97,7 +108,7 @@ impl Mice {
                     imputed[[missing_indices[k], j]] = *v;
                 }
                 if i == self.n_iterations - 1 {
-                    self.fitted.push(self.backend.clone());
+                    self.models.push(self.backend.clone());
                 }
             }
         }
@@ -140,7 +151,7 @@ mod test {
     fn move_away_from_initial() {
         let data = Array2::from_shape_vec((8, 4), POINTS.to_vec()).unwrap();
         let simple = SimpleImputer::new().fit_impl(&data).impute(&data);
-        let mice = Mice::new(2, "linear", 1.0).fit_impl(&data).impute(&data);
+        let mice = Mice::linear(2).fit_impl(&data).impute(&data);
         let diff = simple.iter().zip(&mice).any(|(p, q)| (p - q).abs() > 1e-6);
         println!("Simple: \n{}\n", &simple);
         println!("Mice: \n{}\n", &mice);
@@ -150,12 +161,25 @@ mod test {
     #[test]
     fn ridge_neq_lin() {
         let data = Array2::from_shape_vec((8, 4), POINTS.to_vec()).unwrap();
-        let ridge = Mice::new(2, "ridge", 1.0).fit_impl(&data).impute(&data);
-        let lin = Mice::new(2, "linear", 1.0).fit_impl(&data).impute(&data);
+        let ridge = Mice::ridge(2, 1.0).fit_impl(&data).impute(&data);
+        let lin = Mice::linear(2).fit_impl(&data).impute(&data);
         let diff = ridge.iter().zip(&lin).any(|(p, q)| (p - q).abs() > 1e-6);
         println!("ridge: \n{}\n", &ridge);
         println!("linear: \n{}\n", &lin);
-        assert!(diff, "Still at initial values :(");
+        assert!(diff, "Linear == Ridge values :(");
+    }
+
+    #[test]
+    fn pmm() {
+        let data = Array2::from_shape_vec((8, 4), POINTS.to_vec()).unwrap();
+        let pmm = Mice::pmm(2).fit_impl(&data).impute(&data);
+        println!("ridge: \n{}\n", &pmm);
+        for e in &pmm {
+            assert!(!e.is_nan());
+        }
+        let lin = Mice::linear(2).fit_impl(&data).impute(&data);
+        let diff = pmm.iter().zip(&lin).any(|(p, q)| (p - q).abs() > 1e-6);
+        assert!(diff, "Linear == PMM values :(");
     }
 
     const POINTS: &[f64] = &[

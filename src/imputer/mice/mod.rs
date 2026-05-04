@@ -1,3 +1,3 @@
-mod linear_regression;
+mod backend;
 mod model;
 pub use model::Mice;
