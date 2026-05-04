@@ -9,7 +9,7 @@ name = "gouda"
 crate-type = ["cdylib"]
 
 [dependencies]
-ureq = { version = "3", features = ["tls", "rustls"] }
+ureq = { version = "3", features = ["_tls", "rustls"] }
 ndarray = "0.17.2"
 ndarray-linalg = { version = "0.18.1", features = ["openblas-static"] }
 numpy = "0.28.0"
