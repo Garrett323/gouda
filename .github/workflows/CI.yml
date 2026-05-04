@@ -24,41 +24,24 @@ jobs:
     strategy:
       matrix:
         platform:
-          - runner: ubuntu-24.04
+          - runner: ubuntu-22.04
             target: x86_64
-          - runner: ubuntu-24.04
+          - runner: ubuntu-22.04
             target: x86
-          - runner: ubuntu-24.04
+          - runner: ubuntu-22.04
             target: aarch64
-          - runner: ubuntu-24.04
+          - runner: ubuntu-22.04
             target: armv7
-          - runner: ubuntu-24.04
+          - runner: ubuntu-22.04
             target: s390x
-          - runner: ubuntu-24.04
+          - runner: ubuntu-22.04
             target: ppc64le
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: 3.x
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libopenblas-dev libssl-dev pkg-config
-      - name: Fix pkg-config path
-        run: |
-          echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig" >> $GITHUB_ENV
-      - name: Verify OpenSSL detection
-        run: |
-          pkg-config --modversion openssl
-          pkg-config --cflags openssl
-          pkg-config --libs openssl
       - name: Build wheels
-        env:
-          OPENSSL_DIR: /usr
-          OPENSSL_INCLUDE_DIR: /usr/include
-          OPENSSL_LIB_DIR: ${{ matrix.platform.target == 'x86_64' && '/usr/lib/x86_64-linux-gnu' || '' }}
-          PKG_CONFIG_ALLOW_CROSS: 1
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
@@ -76,13 +59,13 @@ jobs:
     strategy:
       matrix:
         platform:
-          - runner: ubuntu-24.04
+          - runner: ubuntu-22.04
             target: x86_64
-          - runner: ubuntu-24.04
+          - runner: ubuntu-22.04
             target: x86
-          - runner: ubuntu-24.04
+          - runner: ubuntu-22.04
             target: aarch64
-          - runner: ubuntu-24.04
+          - runner: ubuntu-22.04
             target: armv7
     steps:
       - uses: actions/checkout@v6
@@ -96,8 +79,6 @@ jobs:
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
-          before-script-linux: |
-            apk add --no-cache openblas-dev lapack-dev pkgconf
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
@@ -124,12 +105,6 @@ jobs:
         with:
           python-version: 3.13
           architecture: ${{ matrix.platform.python_arch }}
-      - name: Install vcpkg
-        run: |
-          git clone https://github.com/microsoft/vcpkg
-          .\vcpkg\bootstrap-vcpkg.bat
-      - name: Install OpenBLAS
-        run: .\vcpkg\vcpkg install openblas:x64-windows
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -156,10 +131,6 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: 3.x
-      - name: Install OpenBLAS
-        run: |
-          brew update
-          brew install openblas
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
