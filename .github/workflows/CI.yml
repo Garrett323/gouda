@@ -45,10 +45,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libopenblas-dev libssl-dev pkg-config
+      - name: Fix pkg-config path
+        run: |
+          echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig" >> $GITHUB_ENV
       - name: Verify OpenSSL detection
         run: |
           pkg-config --modversion openssl
-          echo "OPENSSL_DIR=/usr" >> $GITHUB_ENV
+          pkg-config --cflags openssl
+          pkg-config --libs openssl
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
