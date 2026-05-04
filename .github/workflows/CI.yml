@@ -47,24 +47,9 @@ jobs:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
-          manylinux: "2_28"
-          before-script-linux: |
-            if command -v dnf >/dev/null 2>&1; then
-                dnf install -y \
-                    cmake make gcc-gfortran \
-                    openssl-devel \
-                    pkgconfig \
-                    perl perl-core \
-                    openblas-devel || true
-
-            elif command -v yum >/dev/null 2>&1; then
-                yum install -y \
-                    cmake make gcc-gfortran \
-                    openssl-devel \
-                    pkgconfig \
-                    perl perl-core \
-                    openblas-devel || true
-            fi
+          manylinux: auto
+          pre-build-command: |
+            yum install -y pkgconfig openssl-devel perl perl-core gcc gcc-c++ make cmake
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
