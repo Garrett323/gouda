@@ -41,6 +41,10 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: 3.x
+      - name: Update apt and install OpenBLAS
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopenblas-dev
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -48,8 +52,6 @@ jobs:
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: auto
-          before-script-linux: |
-            sudo apt install openblas-devel lapack-devel pkgconfig
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
