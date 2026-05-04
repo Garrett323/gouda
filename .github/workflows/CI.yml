@@ -48,8 +48,8 @@ jobs:
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: "2_28" 
-          before-script-linux: |
-            dnf install -y pkgconfig openssl-devel perl perl-core gcc gcc-c++ make cmake
+          # before-script-linux: |
+          #   dnf install -y pkgconfig openssl-devel perl perl-core gcc gcc-c++ make cmake
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
