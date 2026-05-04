@@ -48,6 +48,7 @@ jobs:
       - name: Verify OpenSSL detection
         run: |
           pkg-config --modversion openssl
+          echo "OPENSSL_DIR=/usr" >> $GITHUB_ENV
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
