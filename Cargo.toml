@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 ndarray = "0.17.2"
-ndarray-linalg = { version = "0.18.1", features = ["openblas"] }
+ndarray-linalg = { version = "0.18.1", features = ["openblas-system"] }
 numpy = "0.28.0"
 pyo3 = { version = "0.28", features = ["extension-module"] }
 rand = "0.10.1"
