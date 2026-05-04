@@ -1,17 +1,14 @@
 use crate::utils::pyany_to_vec;
-use core::f64;
+use ndarray::Array2;
 use numpy::{IntoPyArray, PyArray2};
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
-use std::ops::Index;
 
 #[pyclass]
 pub struct KnnImputer {
     #[pyo3(get, set)]
     k: usize,
-    nrows: usize,
-    ncols: usize,
-    data: Option<Vec<f64>>,
+    data: Option<Array2<f64>>,
     is_fitted: bool,
     metric: String,
     weights: String,
@@ -25,11 +22,10 @@ impl KnnImputer {
     #[new]
     #[pyo3(signature = (k=5, metric="nan_euclid", weights="uniform"))]
     pub fn new(k: usize, metric: &str, weights: &str) -> KnnImputer {
+        assert!(ALLOWED_WEIGHTS.contains(&weights));
         KnnImputer::sanity_check(&metric, &weights);
         KnnImputer {
             k,
-            nrows: 0,
-            ncols: 0,
             data: None,
             is_fitted: false,
             metric: metric.to_owned(),
@@ -41,9 +37,7 @@ impl KnnImputer {
         let (vec, nrows, ncols) = pyany_to_vec(py, data)?;
         {
             let mut inner = slf.borrow_mut(py);
-            inner.data = Some(vec);
-            inner.nrows = nrows;
-            inner.ncols = ncols;
+            inner.data = Some(Array2::from_shape_vec((nrows, ncols), vec).unwrap());
             inner.is_fitted = true;
         } // dropping inner here (releasing the mutex)
         Ok(slf)
@@ -60,7 +54,7 @@ impl KnnImputer {
                 "Imputer is not fitted",
             )));
         }
-        let (data, nrows, _) = pyany_to_vec(py, data)?;
+        let (data, nrows, ncols) = pyany_to_vec(py, data)?;
         // actual method
         let dist = match self.metric.as_str() {
             "nan_euclid" => Self::nan_euclid,
@@ -74,7 +68,7 @@ impl KnnImputer {
         };
         let imputed = self.brute_force(&data, nrows, dist);
         // return python object
-        let array = ndarray::Array2::from_shape_vec((self.nrows, self.ncols), imputed)
+        let array = ndarray::Array2::from_shape_vec((nrows, ncols), imputed)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         Ok(array.into_pyarray(py))
     }
@@ -89,13 +83,15 @@ impl KnnImputer {
     ) -> Vec<f64> {
         let mut imputed = data.to_vec();
         let mut i = 0;
+
+        let base = self.data.as_ref().unwrap();
         while i < data.len() {
             if data[i].is_nan() {
                 // figure out point and impute
-                let row = i / self.ncols;
-                let col = i % self.ncols;
+                let row = i / base.shape()[1];
+                let col = i % base.shape()[1];
                 let mut cols = Vec::with_capacity(20);
-                for j in col..self.ncols {
+                for j in col..base.shape()[1] {
                     let l = i + j - col;
                     if l >= data.len() {
                         break;
@@ -105,12 +101,16 @@ impl KnnImputer {
                     }
                 }
                 let mut distances = Vec::with_capacity(nrows);
-                let p = &self[row];
-                for r in 0..self.nrows {
+                let p = base.row(row);
+                for r in 0..base.shape()[0] {
                     if r == row {
                         distances.push(f64::MAX); // dont consider distance to self
                     } else {
-                        distances.push(dist(&self, p, &self[r]));
+                        distances.push(dist(
+                            &self,
+                            p.as_slice().unwrap(),
+                            &base.row(r).as_slice().unwrap(),
+                        ));
                     }
                 }
                 let mut indices: Vec<usize> = (0..nrows).collect();
@@ -120,7 +120,7 @@ impl KnnImputer {
                 for (avg, c) in avgs.into_iter().zip(&cols) {
                     imputed[i + c - col] = avg;
                 }
-                i += self.ncols - col;
+                i += base.shape()[1] - col;
             } else {
                 i += 1;
             }
@@ -130,10 +130,11 @@ impl KnnImputer {
 
     fn average(&self, indices: &[usize], cols: &[usize], weights: &[f64]) -> Vec<f64> {
         let mut avg: Vec<f64> = vec![0.0; cols.len()];
+        let base = self.data.as_ref().unwrap();
         for (j, c) in cols.iter().enumerate() {
             let mut count = 0;
             for i in indices {
-                let val = self[*i][*c];
+                let val = base.row(*i)[*c];
                 if val.is_nan() {
                     continue;
                 }
@@ -143,7 +144,6 @@ impl KnnImputer {
                     break;
                 }
             }
-            // avg[j] *= 1.0 / self.k as f64;
         }
         avg
     }
@@ -174,8 +174,6 @@ impl KnnImputer {
 
 // Distance Functions
 impl KnnImputer {
-    // TODO:
-    // write tests
     fn nan_euclid(&self, a: &[f64], b: &[f64]) -> f64 {
         let mut total = 0.0;
         let mut valid = 0;
@@ -214,47 +212,16 @@ impl KnnImputer {
     }
 }
 
-impl Index<usize> for KnnImputer {
-    type Output = [f64];
-
-    fn index(&self, row: usize) -> &[f64] {
-        let offset = row * self.ncols;
-        &self.data.as_ref().unwrap()[offset..offset + self.ncols]
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*; // has access to everything, including private
 
     #[test]
-    fn test_nan_euclid() {
+    fn nan_euclid() {
         let knn = KnnImputer::new(5, "nan_euclid", "uniform");
         let p = &[f64::NAN, 0.22129885, 0.8863533, 0.50595314, 0.5011135];
-        let points = &[
-            [0.76052103, f64::NAN, 0.4094729, 0.9573324, f64::NAN],
-            [0.27839605, 0.7338148, 0.98359227, 0.98189233, 0.45384631],
-            [f64::NAN, 0.22129885, 0.8863533, 0.50595314, 0.5011135],
-            [f64::NAN, 0.32309935, 0.64573872, f64::NAN, f64::NAN],
-            [0.9317995, 0.51597243, 0.38054457, 0.62366235, 0.12229672],
-            [0.90547984, f64::NAN, 0.68424979, 0.55400964, 0.55284803],
-            [0.68846839, 0.53889275, 0.44453843, 0.43416536, 0.18575075],
-            [0.13333331, 0.8772666, 0.64398646, f64::NAN, 0.90529859],
-            [0.69819416, 0.65251852, 0.39663618, 0.65702538, f64::NAN],
-        ];
-        let expected = &[
-            1.0382174099275148,
-            0.7912650658744038,
-            0.0,
-            0.41309417813332494,
-            0.7905951937189456,
-            0.2763805321428371,
-            0.7077017509263522,
-            1.042753531574897,
-            0.8646734303095986,
-        ];
 
-        for (e, q) in expected.iter().zip(points) {
+        for (e, q) in EXPECTED_EUCLID.iter().zip(POINTS_EUCLID) {
             let result = knn.nan_euclid(p, q).sqrt();
             assert!(
                 (result - e).abs() < 1e-7,
@@ -265,7 +232,7 @@ mod tests {
         }
     }
     #[test]
-    fn test_expected_distance() {
+    fn expected_distance() {
         let p = &[f64::NAN, 0.555556, f64::NAN, 0.555556];
         let points = &[
             [0.0, 0.777778, 0.0, 0.777778],
@@ -300,7 +267,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compare() {
+    fn compare() {
         let knn = KnnImputer::new(5, "nan_euclid", "uniform");
         let (a, b) = (&[1.0, 2.0], &[3.0, 4.0]);
         let diff = knn.nan_euclid(a, b).sqrt() - knn.expected_distance(a, b);
@@ -320,4 +287,27 @@ mod tests {
             ed
         );
     }
+
+    const POINTS_EUCLID: &[[f64; 5]] = &[
+        [0.76052103, f64::NAN, 0.4094729, 0.9573324, f64::NAN],
+        [0.27839605, 0.7338148, 0.98359227, 0.98189233, 0.45384631],
+        [f64::NAN, 0.22129885, 0.8863533, 0.50595314, 0.5011135],
+        [f64::NAN, 0.32309935, 0.64573872, f64::NAN, f64::NAN],
+        [0.9317995, 0.51597243, 0.38054457, 0.62366235, 0.12229672],
+        [0.90547984, f64::NAN, 0.68424979, 0.55400964, 0.55284803],
+        [0.68846839, 0.53889275, 0.44453843, 0.43416536, 0.18575075],
+        [0.13333331, 0.8772666, 0.64398646, f64::NAN, 0.90529859],
+        [0.69819416, 0.65251852, 0.39663618, 0.65702538, f64::NAN],
+    ];
+    const EXPECTED_EUCLID: &[f64; 9] = &[
+        1.0382174099275148,
+        0.7912650658744038,
+        0.0,
+        0.41309417813332494,
+        0.7905951937189456,
+        0.2763805321428371,
+        0.7077017509263522,
+        1.042753531574897,
+        0.8646734303095986,
+    ];
 }

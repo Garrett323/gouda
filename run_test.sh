@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-
-cargo test
+cargo test --release
 maturin develop --release
 python -m pytest tests

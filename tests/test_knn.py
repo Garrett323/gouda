@@ -11,14 +11,13 @@ def test_time():
     N = 5
 # Warmup
     for _ in range(3):
-        RSKNN().fit(data).transform(data)
-        SKKNN().fit(data).transform(data)
+        _ = RSKNN().fit(data).transform(data)
+        _ = SKKNN().fit(data).transform(data)
 
 # Benchmark Rust
     times_rs = []
     for _ in range(N):
-        imputer = RSKNN()
-        imputer.fit(data)
+        imputer = RSKNN().fit(data)
         start = time.perf_counter_ns()
         _ = imputer.transform(data)
         times_rs.append(time.perf_counter_ns() - start)
@@ -26,8 +25,7 @@ def test_time():
 # Benchmark sklearn
     times_sk = []
     for _ in range(N):
-        imputer = SKKNN()
-        imputer.fit(data)
+        imputer = SKKNN().fit(data)
         start = time.perf_counter_ns()
         _ = imputer.transform(data)
         times_sk.append(time.perf_counter_ns() - start)
