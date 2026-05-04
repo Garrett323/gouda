@@ -123,6 +123,12 @@ jobs:
         with:
           python-version: 3.13
           architecture: ${{ matrix.platform.python_arch }}
+      - name: Install vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg
+          .\vcpkg\bootstrap-vcpkg.bat
+      - name: Install OpenBLAS
+        run: .\vcpkg\vcpkg install openblas:x64-windows
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
