@@ -45,11 +45,12 @@ impl SimpleImputer {
             )));
         }
         let (vec, nrows, ncols) = pyany_to_vec(py, data)?;
-        let imputed = self.impute(&Array2::from_shape_vec((nrows, ncols), vec).unwrap());
+        let imputed = self.impute(
+            &Array2::from_shape_vec((nrows, ncols), vec)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?,
+        );
         // return python object
-        let array = Array2::from_shape_vec((nrows, ncols), imputed)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-        Ok(array.into_pyarray(py))
+        Ok(imputed.into_pyarray(py))
     }
 }
 
@@ -75,7 +76,7 @@ impl SimpleImputer {
         means
     }
 
-    pub fn impute(&self, data: &Array2<f64>) -> Vec<f64> {
+    pub fn impute(&self, data: &Array2<f64>) -> Array2<f64> {
         let mut imputed = vec![0.0; data.shape()[0] * data.shape()[1]];
         for j in 0..data.shape()[0] {
             for i in 0..data.shape()[1] {
@@ -87,7 +88,7 @@ impl SimpleImputer {
                 }
             }
         }
-        imputed
+        Array2::from_shape_vec([data.nrows(), data.ncols()], imputed).unwrap()
     }
 }
 

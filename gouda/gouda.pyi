@@ -35,3 +35,15 @@ class SimpleImputer:
         ...
 
 
+class Mice:
+    n_iterations: int = 15
+    backend: str = "linear"
+    alpha: float = 1.0
+    def fit(self, data:numpy.typing.NDArray[numpy.float64], *, n_iterations: int = 15, backend: str = "linear", alpha: float = 1.0) -> Mice:
+        ...
+
+    def transform(self, data:numpy.typing.NDArray[numpy.float64]) -> numpy.typing.NDArray[numpy.float64]:
+        ...
+
+
+

@@ -1,17 +1,10 @@
-use crate::imputer::Mice;
 use ndarray::{Array1, Array2, Axis};
 use ndarray_linalg::{LeastSquaresSvd, SVD};
 
-pub enum SolverType {
-    Linear,
-    Ridge,
-    Bayesian,
-}
-
-pub trait Solver {
+pub trait Solver: Send + Sync {
     fn bias(&self) -> bool;
     fn coefficients(&self) -> &Option<Array1<f64>>;
-    fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>) -> &Self;
+    fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>);
     fn predict(&self, points: &Array2<f64>) -> Array1<f64> {
         let points = if self.bias() {
             &add_bias_column(points)
@@ -21,14 +14,15 @@ pub trait Solver {
         let weights = self.coefficients().as_ref().unwrap();
         points.dot(weights)
     }
+    fn clone(&self) -> Box<dyn Solver>;
 }
 
-struct LinearRegression {
+pub struct LinearRegression {
     coefficients: Option<Array1<f64>>,
     bias: bool,
 }
 
-struct Ridge {
+pub struct Ridge {
     alpha: f64,
     coefficients: Option<Array1<f64>>,
     bias: bool,
@@ -48,20 +42,18 @@ impl LinearRegression {
         LinearRegression {
             coefficients: None,
             bias: true,
-            // dim: dim + 1,
         }
     }
 }
 
 impl Solver for LinearRegression {
-    fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>) -> &Self {
+    fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>) {
         let data = if self.bias {
             &add_bias_column(data)
         } else {
             data
         };
         self.coefficients = Some(data.least_squares(&target).unwrap().solution);
-        self
     }
     fn bias(&self) -> bool {
         self.bias
@@ -69,10 +61,17 @@ impl Solver for LinearRegression {
     fn coefficients(&self) -> &Option<Array1<f64>> {
         &self.coefficients
     }
+
+    fn clone(&self) -> Box<dyn Solver> {
+        Box::new(LinearRegression {
+            coefficients: self.coefficients.clone(),
+            bias: self.bias.clone(),
+        })
+    }
 }
 
 impl Solver for Ridge {
-    fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>) -> &Self {
+    fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>) {
         let x_mean = data.mean_axis(Axis(0)).unwrap(); // original mean, keep this
         let data = data - &x_mean;
 
@@ -93,13 +92,20 @@ impl Solver for Ridge {
         }
 
         self.coefficients = Some(beta);
-        self
     }
     fn bias(&self) -> bool {
         self.bias
     }
     fn coefficients(&self) -> &Option<Array1<f64>> {
         &self.coefficients
+    }
+
+    fn clone(&self) -> Box<dyn Solver> {
+        Box::new(Ridge {
+            coefficients: self.coefficients.clone(),
+            bias: self.bias.clone(),
+            alpha: self.alpha.clone(),
+        })
     }
 }
 
@@ -150,7 +156,9 @@ mod test {
         let x = Array2::from_shape_vec((20, 5), DATA.to_owned()).unwrap();
         let y = Array1::from_shape_vec(20, TARGET.to_owned()).unwrap();
 
-        let estimate = LinearRegression::new().fit(&x, &y).predict(&x);
+        let mut model = LinearRegression::new();
+        model.fit(&x, &y);
+        let estimate = model.predict(&x);
         println!("EXPECTED:{:?}\nActual{:?}", ESTIMATES, estimate);
 
         let error = ESTIMATES.iter().zip(estimate).map(|(p, q)| (p - q).abs());
@@ -164,7 +172,9 @@ mod test {
         let x = Array2::from_shape_vec((20, 5), DATA.to_owned()).unwrap();
         let y = Array1::from_shape_vec(20, TARGET.to_owned()).unwrap();
 
-        let estimate = Ridge::new(1.0).fit(&x, &y).predict(&x);
+        let mut model = Ridge::new(1.0);
+        model.fit(&x, &y);
+        let estimate = model.predict(&x);
         println!("EXPECTED:{:?}\nActual{:?}", RIDGE_ESTIMATE, estimate);
 
         let error = RIDGE_ESTIMATE
