@@ -52,6 +52,7 @@ jobs:
           manylinux: "2_28"
           before-script-linux: |
             dnf install -y cmake make gcc-gfortran openblas-devel openssl-devel pkg-config
+            echo "OPENSSL_NO_VENDOR=1" >> $CARGO_ENV
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
