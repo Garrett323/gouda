@@ -51,7 +51,7 @@ jobs:
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: "2_28"
           before-script-linux: |
-            dnf install -y cmake make gcc-gfortran openblas-devel openssl-devel pkg-config perl-IPC-Cmd
+            dnf install -y cmake make gcc-gfortran openblas-devel openssl-devel pkg-config perl-IPC-Cmd perl libperl-dev
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
