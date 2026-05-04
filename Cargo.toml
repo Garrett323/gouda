@@ -9,7 +9,7 @@ name = "gouda"
 crate-type = ["cdylib"]
 
 [dependencies]
-openblas-src = { version = "0.10", features = ["static"] }
+openssl = { version = "0.10", features = ["vendored"] }
 ndarray = "0.17.2"
 ndarray-linalg = { version = "0.18.1", features = ["openblas-static"] }
 numpy = "0.28.0"
