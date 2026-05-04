@@ -54,6 +54,10 @@ jobs:
           pkg-config --cflags openssl
           pkg-config --libs openssl
       - name: Build wheels
+        env:
+          OPENSSL_DIR: /usr
+          OPENSSL_LIB_DIR: /usr/lib/x86_64-linux-gnu
+          OPENSSL_INCLUDE_DIR: /usr/include
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
