@@ -47,7 +47,7 @@ impl ConstantImputer {
                 NOT_FITTED_ERR
             )));
         }
-        let (vec, nrows, ncols) = pyany_to_vec(py, data)?;
+        let ((vec, nrows, ncols), _out, _enc) = pyany_to_vec(py, data, None)?;
         let imputed = self.impute(&Array2::from_shape_vec((nrows, ncols), vec).unwrap());
         // return python object
         let array = ndarray::Array2::from_shape_vec((nrows, ncols), imputed)

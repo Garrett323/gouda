@@ -34,7 +34,7 @@ impl KnnImputer {
     }
 
     pub fn fit(slf: Py<Self>, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
-        let (vec, nrows, ncols) = pyany_to_vec(py, data)?;
+        let ((vec, nrows, ncols), _out, _enc) = pyany_to_vec(py, data, None)?;
         {
             let mut inner = slf.borrow_mut(py);
             inner.data = Some(Array2::from_shape_vec((nrows, ncols), vec).unwrap());
@@ -54,7 +54,7 @@ impl KnnImputer {
                 "Imputer is not fitted",
             )));
         }
-        let (data, nrows, ncols) = pyany_to_vec(py, data)?;
+        let ((data, nrows, ncols), _out, _enc) = pyany_to_vec(py, data, None)?;
         // actual method
         let dist = match self.metric.as_str() {
             "nan_euclid" => Self::nan_euclid,
