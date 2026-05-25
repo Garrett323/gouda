@@ -1,4 +1,4 @@
-use crate::utils::{constants::NOT_FITTED_ERR, pyany_to_vec};
+use crate::utils::{self, constants::NOT_FITTED_ERR, pyany_to_vec};
 use ndarray::Array2;
 use numpy::{IntoPyArray, PyArray2};
 use pyo3::prelude::*;
@@ -39,7 +39,7 @@ impl ConstantImputer {
         &self,
         py: Python<'py>,
         data: &Bound<'_, PyAny>,
-    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    ) -> PyResult<Bound<'py, PyAny>> {
         // check if fitted
         if !self.is_fitted {
             return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
@@ -47,12 +47,12 @@ impl ConstantImputer {
                 NOT_FITTED_ERR
             )));
         }
-        let ((vec, nrows, ncols), _out, _enc) = pyany_to_vec(py, data, None)?;
+        let ((vec, nrows, ncols), out, enc) = pyany_to_vec(py, data, None)?;
         let imputed = self.impute(&Array2::from_shape_vec((nrows, ncols), vec).unwrap());
         // return python object
         let array = ndarray::Array2::from_shape_vec((nrows, ncols), imputed)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-        Ok(array.into_pyarray(py))
+        utils::arr_to_out(py, &array, out, enc)
     }
 }
 

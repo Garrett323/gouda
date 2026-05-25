@@ -1,4 +1,4 @@
 pub mod constants;
 mod python;
 
-pub use python::pyany_to_vec;
+pub use python::{arr_to_out, pyany_to_vec};

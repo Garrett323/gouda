@@ -1,6 +1,6 @@
 use super::backend::{LinearRegression, PMM, Ridge, Solver};
 use crate::imputer::SimpleImputer;
-use crate::utils::pyany_to_vec;
+use crate::utils;
 use ndarray::{Array1, Array2, Axis};
 use numpy::{IntoPyArray, PyArray2};
 use pyo3::prelude::*;
@@ -33,7 +33,7 @@ impl Mice {
     }
 
     pub fn fit(slf: Py<Self>, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
-        let ((vec, nrows, ncols), _out, _enc) = pyany_to_vec(py, data, None)?;
+        let ((vec, nrows, ncols), _out, _enc) = utils::pyany_to_vec(py, data, None)?;
         {
             let mut inner = slf.borrow_mut(py);
             inner.fit_impl(
@@ -49,20 +49,20 @@ impl Mice {
         &self,
         py: Python<'py>,
         data: &Bound<'_, PyAny>,
-    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    ) -> PyResult<Bound<'py, PyAny>> {
         // check if fitted
         if !self.is_fitted {
             return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
                 "Imputer is not fitted",
             )));
         }
-        let ((vec, nrows, ncols), _out, _enc) = pyany_to_vec(py, data, None)?;
+        let ((vec, nrows, ncols), out, enc) = utils::pyany_to_vec(py, data, None)?;
         let imputed = self.impute(
             &Array2::from_shape_vec((nrows, ncols), vec)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?,
         );
         // return python object
-        Ok(imputed.into_pyarray(py))
+        utils::arr_to_out(py, &imputed, out, enc)
     }
 }
 

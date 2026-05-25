@@ -1,6 +1,5 @@
-use crate::utils::pyany_to_vec;
+use crate::utils;
 use ndarray::Array2;
-use numpy::{IntoPyArray, PyArray2};
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 
@@ -34,7 +33,7 @@ impl KnnImputer {
     }
 
     pub fn fit(slf: Py<Self>, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
-        let ((vec, nrows, ncols), _out, _enc) = pyany_to_vec(py, data, None)?;
+        let ((vec, nrows, ncols), _out, _enc) = utils::pyany_to_vec(py, data, None)?;
         {
             let mut inner = slf.borrow_mut(py);
             inner.data = Some(Array2::from_shape_vec((nrows, ncols), vec).unwrap());
@@ -47,14 +46,14 @@ impl KnnImputer {
         &self,
         py: Python<'py>,
         data: &Bound<'_, PyAny>,
-    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    ) -> PyResult<Bound<'py, PyAny>> {
         // check if fitted
         if !self.is_fitted {
             return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
                 "Imputer is not fitted",
             )));
         }
-        let ((data, nrows, ncols), _out, _enc) = pyany_to_vec(py, data, None)?;
+        let ((data, nrows, ncols), out, enc) = utils::pyany_to_vec(py, data, None)?;
         // actual method
         let dist = match self.metric.as_str() {
             "nan_euclid" => Self::nan_euclid,
@@ -70,7 +69,7 @@ impl KnnImputer {
         // return python object
         let array = ndarray::Array2::from_shape_vec((nrows, ncols), imputed)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-        Ok(array.into_pyarray(py))
+        utils::arr_to_out(py, &array, out, enc)
     }
 }
 
