@@ -49,26 +49,48 @@ pub struct DecisionTree {
 pub struct RandomForest {
     trees: Vec<DecisionTree>,
     n_trees: usize,
+    max_depth: usize,
+    min_samples_leaf: usize,
     seed: u64,
 }
 
 impl RandomForest {
-    pub fn new(n_trees: usize, seed: u64) -> RandomForest {
+    pub fn new(
+        n_trees: usize,
+        seed: u64,
+        max_depth: usize,
+        min_samples_leaf: usize,
+    ) -> RandomForest {
         RandomForest {
             trees: Vec::new(),
             n_trees,
             seed,
+            min_samples_leaf,
+            max_depth,
         }
     }
     pub fn fit(&mut self, data: &Array2<f64>, target: ArrayView1<f64>) -> &RandomForest {
         self.trees = Vec::with_capacity(self.n_trees);
-
+        for i in 0..self.n_trees {
+            self.trees.push(DecisionTree::new(
+                self.max_depth,
+                self.min_samples_leaf,
+                Task::Regression,
+            ));
+            let (fit_data, fit_target) = self.bootstrap(data.view(), target);
+            self.trees[i].fit(&fit_data, fit_target.view());
+        }
         self
     }
 
     pub fn transform(&self, data: &Array2<f64>) -> Array1<f64> {
-        data.column(0).to_owned()
+        let mut result = Array1::zeros(data.nrows());
+        for t in &self.trees {
+            result += &t.predict(data);
+        }
+        result / self.n_trees as f64
     }
+
     fn bootstrap(&self, x: ArrayView2<f64>, y: ArrayView1<f64>) -> (Array2<f64>, Array1<f64>) {
         let mut rng = StdRng::seed_from_u64(self.seed);
         let n = x.nrows();
@@ -86,6 +108,11 @@ impl DecisionTree {
             task,
         }
     }
+
+    fn fit(&mut self, data: &Array2<f64>, target: ArrayView1<f64>) -> &Self {
+        self
+    }
+
     fn find_best_split(labels: &[f64]) {
         let mut best_gain = f64::MIN;
         // let total_gain = self.gain(labels);
@@ -95,7 +122,7 @@ impl DecisionTree {
         self.root.as_ref().unwrap().predict(row)
     }
 
-    fn predict(&self, data: &Array2<f64>) -> Vec<f64> {
+    fn predict(&self, data: &Array2<f64>) -> Array1<f64> {
         let nrows = data.nrows();
         (0..nrows)
             .map(|i| self.predict_row(data.row(i).as_slice().expect("Slice not in mem")))
