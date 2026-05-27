@@ -131,13 +131,117 @@ impl DecisionTree {
 }
 
 #[cfg(test)]
-mod test {
-    #[test]
-    fn decision_tree() {
-        // assert!(false, "TODO implement DecisionTrees");
+mod decision_tree {
+    use super::*;
+    /// Linearly separable 2-class dataset.
+    // fn clf_data() -> (Vec<Vec<f64>>, Array1<f64>) {
+    //     let x: Vec<Vec<f64>> = (0..40).map(|i| vec![i as f64, (i % 3) as f64]).collect();
+    //     let y: Vec<usize> = (0..40).map(|i| if i < 20 { 0 } else { 1 }).collect();
+    //     (x, y)
+    // }
+
+    /// Simple linear regression dataset: y = 2x.
+    fn reg_data() -> (Array2<f64>, Array1<f64>) {
+        let x:  = Array2::from_shape_vec((40,1), (0..40).collect()).unwrap();
+        let y:  = (0..40).map(|i| 2.0 * i as f64).collect();
+        (x, y)
     }
-    #[test]
-    fn random_forest() {
-        // assert!(false, "TODO implement RandomForest");
+
+    fn accuracy(pred: &[usize], truth: &[usize]) -> f64 {
+        pred.iter().zip(truth).filter(|(p, t)| p == t).count() as f64 / truth.len() as f64
     }
+
+    // ── API contract ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn predict_output_length_matches_input() {
+        let (x, y) = clf_data();
+        let clf = DecisionTree::new(4, 2, task::Regression);
+            clf.fit(&x, &y);
+        assert_eq!(clf.predict(&x).len(), x.len());
+    }
+
+    #[test]
+    fn predict_proba_shape_and_sums_to_one() {
+        let (x, y) = clf_data();
+        let n_classes = 2;
+        let clf = CARTClassifier::new().fit(&x, &y);
+        let proba = clf.predict_proba(&x);
+        assert_eq!(proba.len(), x.len());
+        for row in &proba {
+            assert_eq!(row.len(), n_classes);
+            let sum: f64 = row.iter().sum();
+            assert!((sum - 1.0).abs() < 1e-9, "proba row sums to {sum}");
+        }
+    }
+
+    #[test]
+    fn feature_importances_sum_to_one() {
+        let (x, y) = clf_data();
+        let clf = CARTClassifier::new().fit(&x, &y);
+        let sum: f64 = clf.feature_importances().iter().sum();
+        assert!((sum - 1.0).abs() < 1e-9, "importances sum to {sum}");
+    }
+
+    // ── Hyperparameters ───────────────────────────────────────────────────────
+
+    #[test]
+    fn max_depth_is_respected() {
+        let (x, y) = clf_data();
+        let clf = DecisionTree::new(2, 0, Task::Regression)
+        clf.fit(&x, y.view());
+        assert!(clf.depth() <= 2);
+    }
+
+    #[test]
+    fn deeper_tree_has_more_leaves() {
+        let (x, y) = clf_data();
+        let shallow = DecisionTree::new(2, 0, Task::Regression)
+        let deep = DecisionTree::new(10, 0, Task::Regression)
+            .fit(&x, y.view())
+        assert!(deep.n_leaves() >= shallow.n_leaves());
+    }
+
+    // ── Correctness ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn classifier_memorises_training_data() {
+        let (x, y) = clf_data();
+        let pred = DecisionTree::new(2, 0, Task::Regression)
+            .fit(&x, y.view())
+            .predict(&x);
+        assert_eq!(accuracy(&pred, &y), 1.0);
+    }
+
+    #[test]
+    fn regressor_fits_linear_target() {
+        let (x, y) = reg_data();
+        let pred = DecisionTree::new(2, 0, Task::Regression)
+            .fit(&x, y.view())
+            .predict(&x);
+        let ss_res: f64 = pred.iter().zip(&y).map(|(p, t)| (p - t).powi(2)).sum();
+        assert!(ss_res < 1e-6, "residual SS = {ss_res}");
+    }
+
+    #[test]
+    fn single_sample_predict() {
+        let x = Array2::from_shape_vec((1, 2), vec![1.0, 2.0]).unwrap();
+        let y = Array1::from_vec(vec![0.0]);
+        let pred = DecisionTree::new(2, 0, Task::Regression)
+            .fit(&x, y.view())
+            .predict(&x);
+        assert_eq!(pred, y);
+    }
+
+    #[test]
+    #[should_panic]
+    fn predict_before_fit_panics() {
+        let x = Array2::from_shape_vec((1, 2), vec![1.0, 2.0]).unwrap();
+        DecisionTree::new(2, 0, Task::Regression).predict(&x);
+    }
+}
+
+#[cfg(test)]
+mod random_forest {
+    use super::*;
 }

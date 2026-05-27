@@ -15,13 +15,20 @@ pub struct MissForest {
     forrests: Vec<RandomForest>,
     n_trees: usize,
     rng: StdRng,
+    max_depth: usize,
+    min_samples_leaf: usize,
 }
 
 #[pymethods]
 impl MissForest {
     #[new]
-    #[pyo3(signature = (n_trees=15, seed = None))]
-    pub fn new(n_trees: usize, seed: Option<u64>) -> MissForest {
+    #[pyo3(signature = (n_trees=15, max_depth=15, min_samples_leaf=5, seed=None))]
+    pub fn new(
+        n_trees: usize,
+        max_depth: usize,
+        min_samples_leaf: usize,
+        seed: Option<u64>,
+    ) -> MissForest {
         let rng = if let Some(x) = seed {
             StdRng::seed_from_u64(x)
         } else {
@@ -34,6 +41,8 @@ impl MissForest {
             init: SimpleImputer::new(),
             forrests: Vec::new(),
             rng,
+            max_depth,
+            min_samples_leaf,
         }
     }
 
@@ -74,7 +83,14 @@ impl MissForest {
     fn fit_impl(&mut self, data: &Array2<f64>) -> &Self {
         let ncols = data.ncols();
         self.forrests = (0..ncols)
-            .map(|_| backend::RandomForest::new(self.n_trees))
+            .map(|_| {
+                backend::RandomForest::new(
+                    self.n_trees,
+                    self.rng.random(),
+                    self.max_depth,
+                    self.min_samples_leaf,
+                )
+            })
             .collect();
 
         self.init.fit_impl(data);
