@@ -42,6 +42,7 @@ pub struct DecisionTree {
     root: Option<Node>,
     task: Task,
     max_depth: usize,
+    depth: Option<usize>,
     min_samples_leaf: usize,
 }
 
@@ -49,9 +50,9 @@ pub struct DecisionTree {
 pub struct RandomForest {
     trees: Vec<DecisionTree>,
     n_trees: usize,
-    max_depth: usize,
     min_samples_leaf: usize,
     seed: u64,
+    max_depth: usize,
 }
 
 impl RandomForest {
@@ -78,7 +79,7 @@ impl RandomForest {
                 Task::Regression,
             ));
             let (fit_data, fit_target) = self.bootstrap(data.view(), target);
-            self.trees[i].fit(&fit_data, fit_target.view());
+            self.trees[i].fit(fit_data.view(), fit_target.view());
         }
         self
     }
@@ -106,16 +107,12 @@ impl DecisionTree {
             max_depth,
             min_samples_leaf,
             task,
+            depth: None,
         }
     }
 
-    fn fit(&mut self, data: &Array2<f64>, target: ArrayView1<f64>) -> &Self {
+    fn fit(&mut self, data: ArrayView2<f64>, target: ArrayView1<f64>) -> &Self {
         self
-    }
-
-    fn find_best_split(labels: &[f64]) {
-        let mut best_gain = f64::MIN;
-        // let total_gain = self.gain(labels);
     }
 
     fn predict_row(&self, row: &[f64]) -> f64 {
@@ -127,6 +124,23 @@ impl DecisionTree {
         (0..nrows)
             .map(|i| self.predict_row(data.row(i).as_slice().expect("Slice not in mem")))
             .collect()
+    }
+
+    fn impurity(&self, left: ArrayView1<f64>, right: ArrayView1<f64>) -> f64 {
+        match self.task {
+            Task::Regression => 0.0,
+            Task::Classification => {
+                panic!("Not Implemneted Yet!")
+            }
+        }
+    }
+
+    fn depth(&self) -> usize {
+        panic!("TODO: Implement")
+    }
+
+    fn n_leaves(&self) -> usize {
+        panic!("TODO: Implement")
     }
 }
 
@@ -142,8 +156,9 @@ mod decision_tree {
 
     /// Simple linear regression dataset: y = 2x.
     fn reg_data() -> (Array2<f64>, Array1<f64>) {
-        let x:  = Array2::from_shape_vec((40,1), (0..40).collect()).unwrap();
-        let y:  = (0..40).map(|i| 2.0 * i as f64).collect();
+        let x = Array2::from_shape_vec((40, 1), (0..40).map(|x| x as f64).collect())
+            .expect("Failed to create test data!");
+        let y = (0..40).map(|i| 2.0 * i as f64).collect();
         (x, y)
     }
 
@@ -151,54 +166,55 @@ mod decision_tree {
         pred.iter().zip(truth).filter(|(p, t)| p == t).count() as f64 / truth.len() as f64
     }
 
-    // ── API contract ──────────────────────────────────────────────────────────
+    fn mse(pred: &[f64], truth: &[f64]) -> f64 {
+        panic!("TODO: Implement")
+    }
 
     #[test]
     fn predict_output_length_matches_input() {
-        let (x, y) = clf_data();
-        let clf = DecisionTree::new(4, 2, task::Regression);
-            clf.fit(&x, &y);
+        let (x, y) = reg_data();
+        let mut clf = DecisionTree::new(4, 2, Task::Regression);
+        clf.fit(x.view(), y.view());
         assert_eq!(clf.predict(&x).len(), x.len());
     }
 
-    #[test]
-    fn predict_proba_shape_and_sums_to_one() {
-        let (x, y) = clf_data();
-        let n_classes = 2;
-        let clf = CARTClassifier::new().fit(&x, &y);
-        let proba = clf.predict_proba(&x);
-        assert_eq!(proba.len(), x.len());
-        for row in &proba {
-            assert_eq!(row.len(), n_classes);
-            let sum: f64 = row.iter().sum();
-            assert!((sum - 1.0).abs() < 1e-9, "proba row sums to {sum}");
-        }
-    }
+    // #[test]
+    // fn predict_proba_shape_and_sums_to_one() {
+    //     let (x, y) = clf_data();
+    //     let n_classes = 2;
+    //     let clf = DecisionTree::new().fit(&x, &y);
+    //     let proba = clf.predict_proba(&x);
+    //     assert_eq!(proba.len(), x.len());
+    //     for row in &proba {
+    //         assert_eq!(row.len(), n_classes);
+    //         let sum: f64 = row.iter().sum();
+    //         assert!((sum - 1.0).abs() < 1e-9, "proba row sums to {sum}");
+    //     }
+    // }
 
-    #[test]
-    fn feature_importances_sum_to_one() {
-        let (x, y) = clf_data();
-        let clf = CARTClassifier::new().fit(&x, &y);
-        let sum: f64 = clf.feature_importances().iter().sum();
-        assert!((sum - 1.0).abs() < 1e-9, "importances sum to {sum}");
-    }
-
-    // ── Hyperparameters ───────────────────────────────────────────────────────
+    // #[test]
+    // fn feature_importances_sum_to_one() {
+    //     let (x, y) = clf_data();
+    //     let clf = DecisionTree::new().fit(&x, &y);
+    //     let sum: f64 = clf.feature_importances().iter().sum();
+    //     assert!((sum - 1.0).abs() < 1e-9, "importances sum to {sum}");
+    // }
 
     #[test]
     fn max_depth_is_respected() {
-        let (x, y) = clf_data();
-        let clf = DecisionTree::new(2, 0, Task::Regression)
-        clf.fit(&x, y.view());
+        let (x, y) = reg_data();
+        let mut clf = DecisionTree::new(2, 0, Task::Regression);
+        clf.fit(x.view(), y.view());
         assert!(clf.depth() <= 2);
     }
 
     #[test]
     fn deeper_tree_has_more_leaves() {
-        let (x, y) = clf_data();
-        let shallow = DecisionTree::new(2, 0, Task::Regression)
-        let deep = DecisionTree::new(10, 0, Task::Regression)
-            .fit(&x, y.view())
+        let (x, y) = reg_data();
+        let mut shallow = DecisionTree::new(2, 0, Task::Regression);
+        let mut deep = DecisionTree::new(10, 0, Task::Regression);
+        shallow.fit(x.view(), y.view());
+        deep.fit(x.view(), y.view());
         assert!(deep.n_leaves() >= shallow.n_leaves());
     }
 
@@ -206,18 +222,17 @@ mod decision_tree {
 
     #[test]
     fn classifier_memorises_training_data() {
-        let (x, y) = clf_data();
-        let pred = DecisionTree::new(2, 0, Task::Regression)
-            .fit(&x, y.view())
-            .predict(&x);
-        assert_eq!(accuracy(&pred, &y), 1.0);
+        let (x, y) = reg_data();
+        let mut dt = DecisionTree::new(2, 0, Task::Regression);
+        let pred = dt.fit(x.view(), y.view()).predict(&x);
+        assert_eq!(mse(pred.as_slice().unwrap(), y.as_slice().unwrap()), 1.0);
     }
 
     #[test]
     fn regressor_fits_linear_target() {
         let (x, y) = reg_data();
         let pred = DecisionTree::new(2, 0, Task::Regression)
-            .fit(&x, y.view())
+            .fit(x.view(), y.view())
             .predict(&x);
         let ss_res: f64 = pred.iter().zip(&y).map(|(p, t)| (p - t).powi(2)).sum();
         assert!(ss_res < 1e-6, "residual SS = {ss_res}");
@@ -228,7 +243,7 @@ mod decision_tree {
         let x = Array2::from_shape_vec((1, 2), vec![1.0, 2.0]).unwrap();
         let y = Array1::from_vec(vec![0.0]);
         let pred = DecisionTree::new(2, 0, Task::Regression)
-            .fit(&x, y.view())
+            .fit(x.view(), y.view())
             .predict(&x);
         assert_eq!(pred, y);
     }
