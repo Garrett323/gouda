@@ -112,6 +112,22 @@ impl DecisionTree {
     }
 
     fn fit(&mut self, data: ArrayView2<f64>, target: ArrayView1<f64>) -> &Self {
+        // setup book keeping
+        let max_nodes: usize = usize::pow(2, self.max_depth as u32);
+        let mut active_nodes: Vec<&Node> = Vec::new();
+        // how to properly track the feauters used for splitting?
+        let mut features: Vec<usize> = (0..data.ncols()).collect();
+        // build tree
+        for i in 0..max_nodes {
+            // compute best split
+            // split
+            // check stop condition
+            if active_nodes.len() == 0 {
+                // all leaves done; tree is constructed
+                break;
+            }
+        }
+        //  consider prunning
         self
     }
 
