@@ -2,8 +2,10 @@ import numpy as np
 import time
 from sklearn.impute import KNNImputer as SKKNN
 from gouda import KnnImputer as RSKNN
+import pytest
 
 
+@pytest.mark.heavy
 def test_time():
     data = np.random.rand(500, 50)
     data[data < 0.78] = np.nan
@@ -33,7 +35,7 @@ def test_time():
     elapsed_rs = sorted(times_rs)[N // 2]  # median
     elapsed_sk = sorted(times_sk)[N // 2]
 
-    assert elapsed_rs < elapsed_sk * 0.5, f"Rust: {
+    assert elapsed_rs < elapsed_sk * 0.3, f"Rust: {
         elapsed_rs}ns  sklearn: {elapsed_sk}ns"
 
 

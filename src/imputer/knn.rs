@@ -2,6 +2,7 @@ use crate::utils;
 use ndarray::Array2;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
+use rayon::prelude::*;
 
 #[pyclass]
 pub struct KnnImputer {
@@ -99,19 +100,21 @@ impl KnnImputer {
                         cols.push(j);
                     }
                 }
-                let mut distances = Vec::with_capacity(nrows);
                 let p = base.row(row);
-                for r in 0..base.shape()[0] {
-                    if r == row {
-                        distances.push(f64::MAX); // dont consider distance to self
-                    } else {
-                        distances.push(dist(
-                            &self,
-                            p.as_slice().unwrap(),
-                            &base.row(r).as_slice().unwrap(),
-                        ));
-                    }
-                }
+                let distances: Vec<f64> = (0..base.nrows())
+                    .into_par_iter()
+                    .map(|r| {
+                        if r == row {
+                            f64::MAX
+                        } else {
+                            dist(
+                                &self,
+                                p.as_slice().unwrap(),
+                                &base.row(r).as_slice().unwrap(),
+                            )
+                        }
+                    })
+                    .collect();
                 let mut indices: Vec<usize> = (0..nrows).collect();
                 // indices.sort_by(|&a, &b| distances[a].total_cmp(&distances[b]));
                 indices.sort_unstable_by(|&a, &b| distances[a].total_cmp(&distances[b]));
