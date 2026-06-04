@@ -85,6 +85,8 @@ impl KnnImputer {
         let mut i = 0;
 
         let base = self.data.as_ref().unwrap();
+        let mut distances = vec![0.0; nrows];
+        let mut indices: Vec<usize> = (0..nrows).collect();
         while i < data.len() {
             if data[i].is_nan() {
                 // figure out point and impute
@@ -94,21 +96,17 @@ impl KnnImputer {
                     .filter(|j| data[i + j - col].is_nan())
                     .collect();
                 let p = base.row(row);
-                let distances: Vec<f64> = (0..base.nrows())
-                    .into_par_iter()
-                    .map(|r| {
-                        if r == row {
-                            f64::MAX
-                        } else {
-                            dist(
-                                &self,
-                                p.as_slice().unwrap(),
-                                &base.row(r).as_slice().unwrap(),
-                            )
-                        }
-                    })
-                    .collect();
-                let mut indices: Vec<usize> = (0..nrows).collect();
+                distances.par_iter_mut().enumerate().for_each(|(r, d)| {
+                    *d = if r == row {
+                        f64::MAX
+                    } else {
+                        dist(
+                            &self,
+                            p.as_slice().unwrap(),
+                            &base.row(r).as_slice().unwrap(),
+                        )
+                    }
+                });
                 // indices.sort_by(|&a, &b| distances[a].total_cmp(&distances[b]));
                 indices.par_sort_unstable_by(|&a, &b| distances[a].total_cmp(&distances[b]));
                 let avgs = self.average(&indices, &cols, &self.get_weights(&distances));
