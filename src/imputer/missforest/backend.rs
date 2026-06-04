@@ -1,5 +1,6 @@
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
 use rand::prelude::*;
+use rayon::prelude::*;
 
 #[derive(Clone)]
 enum Task {
@@ -137,9 +138,11 @@ impl DecisionTree {
 
     fn predict(&self, data: &Array2<f64>) -> Array1<f64> {
         let nrows = data.nrows();
-        (0..nrows)
+        let predictions: Vec<f64> = (0..nrows)
+            .into_par_iter()
             .map(|i| self.predict_row(data.row(i).as_slice().expect("Slice not in mem")))
-            .collect()
+            .collect();
+        Array1::from_vec(predictions)
     }
 
     fn impurity(&self, left: ArrayView1<f64>, right: ArrayView1<f64>) -> f64 {
