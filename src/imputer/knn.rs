@@ -151,7 +151,7 @@ impl KnnImputer {
     fn get_weights(&self, distances: &[f64]) -> Vec<f64> {
         match self.weights.as_str() {
             "uniform" => distances.iter().map(|_| 1.0 / self.k as f64).collect(),
-            "distances" => distances.iter().map(|d| 1.0 / d).collect(),
+            "distance" => distances.iter().map(|d| 1.0 / d).collect(),
             w => panic!("Unknown weight {}", w),
         }
     }
