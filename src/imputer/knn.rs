@@ -90,16 +90,9 @@ impl KnnImputer {
                 // figure out point and impute
                 let row = i / base.shape()[1];
                 let col = i % base.shape()[1];
-                let mut cols = Vec::with_capacity(20);
-                for j in col..base.shape()[1] {
-                    let l = i + j - col;
-                    if l >= data.len() {
-                        break;
-                    }
-                    if data[l].is_nan() {
-                        cols.push(j);
-                    }
-                }
+                let cols: Vec<usize> = (col..base.ncols())
+                    .filter(|j| data[i + j - col].is_nan())
+                    .collect();
                 let p = base.row(row);
                 let distances: Vec<f64> = (0..base.nrows())
                     .into_par_iter()
@@ -117,7 +110,7 @@ impl KnnImputer {
                     .collect();
                 let mut indices: Vec<usize> = (0..nrows).collect();
                 // indices.sort_by(|&a, &b| distances[a].total_cmp(&distances[b]));
-                indices.sort_unstable_by(|&a, &b| distances[a].total_cmp(&distances[b]));
+                indices.par_sort_unstable_by(|&a, &b| distances[a].total_cmp(&distances[b]));
                 let avgs = self.average(&indices, &cols, &self.get_weights(&distances));
                 for (avg, c) in avgs.into_iter().zip(&cols) {
                     imputed[i + c - col] = avg;
@@ -131,23 +124,30 @@ impl KnnImputer {
     }
 
     fn average(&self, indices: &[usize], cols: &[usize], weights: &[f64]) -> Vec<f64> {
-        let mut avg: Vec<f64> = vec![0.0; cols.len()];
         let base = self.data.as_ref().unwrap();
-        for (j, c) in cols.iter().enumerate() {
+        let avg = |c: &usize| {
             let mut count = 0;
+            let mut avg = 0.0;
             for i in indices {
                 let val = base.row(*i)[*c];
                 if val.is_nan() {
                     continue;
                 }
-                avg[j] += val * weights[*i];
+                avg += val * weights[*i];
                 count += 1;
                 if count >= self.k {
                     break;
                 }
             }
+            avg
+        };
+        if cols.len() > 100 {
+            cols.par_iter().map(avg).collect()
+        } else {
+            cols.iter().map(avg).collect()
         }
-        avg
+        // for (j, c) in cols.iter().enumerate() {}
+        // avg
     }
 
     fn get_weights(&self, distances: &[f64]) -> Vec<f64> {

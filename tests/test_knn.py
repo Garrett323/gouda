@@ -7,7 +7,7 @@ import pytest
 
 @pytest.mark.heavy
 def test_time():
-    data = np.random.rand(500, 50)
+    data = np.random.rand(500, 120)
     data[data < 0.78] = np.nan
 
     N = 5
