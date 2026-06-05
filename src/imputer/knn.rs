@@ -95,16 +95,12 @@ impl KnnImputer {
                 let cols: Vec<usize> = (col..base.ncols())
                     .filter(|j| data[i + j - col].is_nan())
                     .collect();
-                let p = base.row(row);
+                let p = &data[row * base.ncols()..row * base.ncols() + base.ncols()]; //base.row(row);
                 distances.par_iter_mut().enumerate().for_each(|(r, d)| {
                     *d = if r == row {
                         f64::MAX
                     } else {
-                        dist(
-                            &self,
-                            p.as_slice().unwrap(),
-                            &base.row(r).as_slice().unwrap(),
-                        )
+                        dist(&self, p, &base.row(r).as_slice().unwrap())
                     }
                 });
                 // indices.sort_by(|&a, &b| distances[a].total_cmp(&distances[b]));
