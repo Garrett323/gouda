@@ -13,6 +13,7 @@ mod gouda {
         module.add_class::<imputer::Mice>()?;
         module.add_class::<imputer::SimpleImputer>()?;
         module.add_class::<imputer::ConstantImputer>()?;
+        module.add_class::<imputer::MissForest>()?;
         Ok(())
     }
 }

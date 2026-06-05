@@ -1,13 +1,13 @@
 use super::backend::{LinearRegression, PMM, Ridge, Solver};
 use crate::imputer::SimpleImputer;
-use crate::utils::pyany_to_vec;
+use crate::utils;
 use ndarray::{Array1, Array2, Axis};
-use numpy::{IntoPyArray, PyArray2};
 use pyo3::prelude::*;
+use rayon::prelude::*;
 
 #[pyclass]
 pub struct Mice {
-    n_iterations: usize,
+    max_iter: usize,
     backend: Box<dyn Solver>,
     models: Vec<Box<dyn Solver>>,
     is_fitted: bool,
@@ -16,8 +16,8 @@ pub struct Mice {
 #[pymethods]
 impl Mice {
     #[new]
-    #[pyo3(signature = (n_iterations=15, backend="pmm", alpha=1.0, pmm_backend="linear"))]
-    pub fn new(n_iterations: usize, backend: &str, alpha: f64, pmm_backend: &str) -> Mice {
+    #[pyo3(signature = (max_iter=10, backend="pmm", alpha=1.0, pmm_backend="linear"))]
+    pub fn new(max_iter: usize, backend: &str, alpha: f64, pmm_backend: &str) -> Mice {
         let backend = match backend.to_lowercase().as_str() {
             "linear" => Box::new(LinearRegression::new()) as Box<dyn Solver>,
             "ridge" => Box::new(Ridge::new(alpha)) as Box<dyn Solver>,
@@ -25,7 +25,7 @@ impl Mice {
             _ => panic!("Solver {backend} not supported!"),
         };
         Mice {
-            n_iterations,
+            max_iter,
             backend: backend,
             models: Vec::new(),
             is_fitted: false,
@@ -33,7 +33,7 @@ impl Mice {
     }
 
     pub fn fit(slf: Py<Self>, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
-        let (vec, nrows, ncols) = pyany_to_vec(py, data)?;
+        let ((vec, nrows, ncols), _out, _enc) = utils::pyany_to_vec(py, data, None)?;
         {
             let mut inner = slf.borrow_mut(py);
             inner.fit_impl(
@@ -49,49 +49,58 @@ impl Mice {
         &self,
         py: Python<'py>,
         data: &Bound<'_, PyAny>,
-    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    ) -> PyResult<Bound<'py, PyAny>> {
         // check if fitted
         if !self.is_fitted {
             return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
                 "Imputer is not fitted",
             )));
         }
-        let (vec, nrows, ncols) = pyany_to_vec(py, data)?;
+        let ((vec, nrows, ncols), out, enc) = utils::pyany_to_vec(py, data, None)?;
         let imputed = self.impute(
             &Array2::from_shape_vec((nrows, ncols), vec)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?,
         );
         // return python object
-        Ok(imputed.into_pyarray(py))
+        utils::arr_to_out(py, &imputed, out, enc)
     }
 }
 
 impl Mice {
     #[allow(unused)]
-    fn linear(n_iterations: usize) -> Self {
-        Self::new(n_iterations, "linear", 0.0, "linear")
+    fn linear(max_iter: usize) -> Self {
+        Self::new(max_iter, "linear", 0.0, "linear")
     }
     #[allow(unused)]
-    fn ridge(n_iterations: usize, alpha: f64) -> Self {
-        Self::new(n_iterations, "ridge", alpha, "linear")
+    fn ridge(max_iter: usize, alpha: f64) -> Self {
+        Self::new(max_iter, "ridge", alpha, "linear")
     }
     #[allow(unused)]
-    fn pmm(n_iterations: usize) -> Self {
-        Self::new(n_iterations, "pmm", 1.0, "linear")
+    fn pmm(max_iter: usize) -> Self {
+        Self::new(max_iter, "pmm", 1.0, "linear")
     }
 
     fn impute(&self, data: &Array2<f64>) -> Array2<f64> {
         // initial mean imputation
         let mut imputed = SimpleImputer::new().fit_impl(&data).impute(&data);
-        for _ in 0..self.n_iterations {
-            for j in 0..data.shape()[1] {
-                let (_, x_test, _, missing_indices) = split(&imputed, data, j);
-
-                let predictions = self.models[j].predict(&x_test);
-                for (k, v) in predictions.iter().enumerate() {
-                    imputed[[missing_indices[k], j]] = *v;
-                }
-            }
+        for _ in 0..self.max_iter {
+            let imp_ptr = std::sync::Arc::new(SendPtr(imputed.as_mut_ptr()));
+            let splits: Vec<_> = (0..data.ncols())
+                .into_par_iter()
+                .map(|j| split(&imputed, data, j))
+                .collect();
+            splits
+                .into_par_iter()
+                .enumerate()
+                .for_each(|(j, (_, x_test, _, missing_indices))| {
+                    let ptr = std::sync::Arc::clone(&imp_ptr);
+                    let predictions = self.models[j].predict(&x_test);
+                    for (k, v) in predictions.iter().enumerate() {
+                        unsafe {
+                            *ptr.0.add(missing_indices[k] * data.ncols() + j) = *v;
+                        }
+                    }
+                });
         }
         imputed
     }
@@ -99,7 +108,7 @@ impl Mice {
     fn fit_impl(&mut self, data: &Array2<f64>) -> &Self {
         self.models = Vec::with_capacity(data.shape()[1]);
         let mut imputed = SimpleImputer::new().fit_impl(&data).impute(&data);
-        for i in 0..self.n_iterations {
+        for i in 0..self.max_iter {
             for j in 0..data.shape()[1] {
                 let (x_train, x_test, y_train, missing_indices) = split(&imputed, data, j);
                 self.backend.fit(&x_train, &y_train);
@@ -107,7 +116,7 @@ impl Mice {
                     // let old = imputed[[missing_indices[k], j]];
                     imputed[[missing_indices[k], j]] = *v;
                 }
-                if i == self.n_iterations - 1 {
+                if i == self.max_iter - 1 {
                     self.models.push(self.backend.clone());
                 }
             }
@@ -142,6 +151,10 @@ fn split(
     let y_train = y.select(Axis(0), &observed_idx);
     (x_train, x_test, y_train, missing_idx)
 }
+
+struct SendPtr(*mut f64);
+unsafe impl Send for SendPtr {}
+unsafe impl Sync for SendPtr {}
 
 #[cfg(test)]
 mod test {

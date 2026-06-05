@@ -22,7 +22,7 @@ impl SimpleImputer {
     }
 
     pub fn fit(slf: Py<Self>, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
-        let (vec, nrows, ncols) = pyany_to_vec(py, data)?;
+        let ((vec, nrows, ncols), _out, _enc) = pyany_to_vec(py, data, None)?;
         {
             let mut inner = slf.borrow_mut(py);
             let data: Array2<f64> = Array2::from_shape_vec((nrows, ncols), vec).unwrap();
@@ -44,7 +44,7 @@ impl SimpleImputer {
                 NOT_FITTED_ERR
             )));
         }
-        let (vec, nrows, ncols) = pyany_to_vec(py, data)?;
+        let ((vec, nrows, ncols), _out, _enc) = pyany_to_vec(py, data, None)?;
         let imputed = self.impute(
             &Array2::from_shape_vec((nrows, ncols), vec)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?,

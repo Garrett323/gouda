@@ -1,8 +1,8 @@
-use crate::utils::pyany_to_vec;
+use crate::utils;
 use ndarray::Array2;
-use numpy::{IntoPyArray, PyArray2};
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
+use rayon::prelude::*;
 
 #[pyclass]
 pub struct KnnImputer {
@@ -34,7 +34,7 @@ impl KnnImputer {
     }
 
     pub fn fit(slf: Py<Self>, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
-        let (vec, nrows, ncols) = pyany_to_vec(py, data)?;
+        let ((vec, nrows, ncols), _out, _enc) = utils::pyany_to_vec(py, data, None)?;
         {
             let mut inner = slf.borrow_mut(py);
             inner.data = Some(Array2::from_shape_vec((nrows, ncols), vec).unwrap());
@@ -47,14 +47,14 @@ impl KnnImputer {
         &self,
         py: Python<'py>,
         data: &Bound<'_, PyAny>,
-    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    ) -> PyResult<Bound<'py, PyAny>> {
         // check if fitted
         if !self.is_fitted {
             return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
                 "Imputer is not fitted",
             )));
         }
-        let (data, nrows, ncols) = pyany_to_vec(py, data)?;
+        let ((data, nrows, ncols), out, enc) = utils::pyany_to_vec(py, data, None)?;
         // actual method
         let dist = match self.metric.as_str() {
             "nan_euclid" => Self::nan_euclid,
@@ -70,7 +70,7 @@ impl KnnImputer {
         // return python object
         let array = ndarray::Array2::from_shape_vec((nrows, ncols), imputed)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-        Ok(array.into_pyarray(py))
+        utils::arr_to_out(py, &array, out, enc)
     }
 }
 
@@ -85,37 +85,26 @@ impl KnnImputer {
         let mut i = 0;
 
         let base = self.data.as_ref().unwrap();
+        let mut distances = vec![0.0; nrows];
+        let mut indices: Vec<usize> = (0..nrows).collect();
         while i < data.len() {
             if data[i].is_nan() {
                 // figure out point and impute
                 let row = i / base.shape()[1];
                 let col = i % base.shape()[1];
-                let mut cols = Vec::with_capacity(20);
-                for j in col..base.shape()[1] {
-                    let l = i + j - col;
-                    if l >= data.len() {
-                        break;
-                    }
-                    if data[l].is_nan() {
-                        cols.push(j);
-                    }
-                }
-                let mut distances = Vec::with_capacity(nrows);
-                let p = base.row(row);
-                for r in 0..base.shape()[0] {
-                    if r == row {
-                        distances.push(f64::MAX); // dont consider distance to self
+                let cols: Vec<usize> = (col..base.ncols())
+                    .filter(|j| data[i + j - col].is_nan())
+                    .collect();
+                let p = &data[row * base.ncols()..row * base.ncols() + base.ncols()]; //base.row(row);
+                distances.par_iter_mut().enumerate().for_each(|(r, d)| {
+                    *d = if r == row {
+                        f64::MAX
                     } else {
-                        distances.push(dist(
-                            &self,
-                            p.as_slice().unwrap(),
-                            &base.row(r).as_slice().unwrap(),
-                        ));
+                        dist(&self, p, &base.row(r).as_slice().unwrap())
                     }
-                }
-                let mut indices: Vec<usize> = (0..nrows).collect();
+                });
                 // indices.sort_by(|&a, &b| distances[a].total_cmp(&distances[b]));
-                indices.sort_unstable_by(|&a, &b| distances[a].total_cmp(&distances[b]));
+                indices.par_sort_unstable_by(|&a, &b| distances[a].total_cmp(&distances[b]));
                 let avgs = self.average(&indices, &cols, &self.get_weights(&distances));
                 for (avg, c) in avgs.into_iter().zip(&cols) {
                     imputed[i + c - col] = avg;
@@ -129,29 +118,36 @@ impl KnnImputer {
     }
 
     fn average(&self, indices: &[usize], cols: &[usize], weights: &[f64]) -> Vec<f64> {
-        let mut avg: Vec<f64> = vec![0.0; cols.len()];
         let base = self.data.as_ref().unwrap();
-        for (j, c) in cols.iter().enumerate() {
+        let avg = |c: &usize| {
             let mut count = 0;
+            let mut avg = 0.0;
             for i in indices {
                 let val = base.row(*i)[*c];
                 if val.is_nan() {
                     continue;
                 }
-                avg[j] += val * weights[*i];
+                avg += val * weights[*i];
                 count += 1;
                 if count >= self.k {
                     break;
                 }
             }
+            avg
+        };
+        if cols.len() > 100 {
+            cols.par_iter().map(avg).collect()
+        } else {
+            cols.iter().map(avg).collect()
         }
-        avg
+        // for (j, c) in cols.iter().enumerate() {}
+        // avg
     }
 
     fn get_weights(&self, distances: &[f64]) -> Vec<f64> {
         match self.weights.as_str() {
             "uniform" => distances.iter().map(|_| 1.0 / self.k as f64).collect(),
-            "distances" => distances.iter().map(|d| 1.0 / d).collect(),
+            "distance" => distances.iter().map(|d| 1.0 / d).collect(),
             w => panic!("Unknown weight {}", w),
         }
     }

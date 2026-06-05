@@ -2,6 +2,7 @@ use ndarray::{Array1, Array2, Axis};
 use ndarray_linalg::{LeastSquaresSvd, SVD};
 
 use rand::prelude::*;
+use rayon::prelude::*;
 use std::sync::Mutex;
 
 pub trait Solver: Send + Sync {
@@ -183,7 +184,7 @@ impl Solver for PMM {
                 samples[i] = self.sample(&pool.to_vec());
             } else {
                 let mut top_k: Vec<f64> = vec![f64::MAX; self.n_neighbors]; //Array1::ones(self.n_neighbors) * f64::MAX;
-                let distances: Array1<f64> = pool.iter().map(|x| (x - p).abs()).collect();
+                let distances: Vec<f64> = pool.par_iter().map(|x| (x - p).abs()).collect();
                 let (mut max_idx, mut max_val) = argmax(&top_k);
                 for (j, d) in distances.iter().enumerate() {
                     if d < &(max_val - p).abs() {
