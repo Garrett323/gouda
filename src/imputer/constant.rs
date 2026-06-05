@@ -1,6 +1,5 @@
 use crate::utils::{self, constants::NOT_FITTED_ERR, pyany_to_vec};
 use ndarray::Array2;
-use numpy::{IntoPyArray, PyArray2};
 use pyo3::prelude::*;
 
 #[pyclass]
