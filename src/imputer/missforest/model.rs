@@ -47,6 +47,12 @@ impl MissForest {
     }
 
     pub fn fit(slf: Py<Self>, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
+        pyo3::PyErr::warn(
+            py,
+            &py.get_type::<pyo3::exceptions::PyUserWarning>(),
+            c"MissForest is currently experimental and may produce unexpected results.",
+            1,
+        )?;
         let ((vec, nrows, ncols), _out, _enc) = pyany_to_vec(py, data, None)?;
         {
             let mut inner = slf.borrow_mut(py);
