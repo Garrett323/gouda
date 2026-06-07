@@ -16,7 +16,7 @@ pub struct Mice {
 #[pymethods]
 impl Mice {
     #[new]
-    #[pyo3(signature = (max_iter=10, backend="pmm", alpha=1.0, pmm_backend="linear"))]
+    #[pyo3(signature = (max_iter=10, backend="linear", alpha=1.0, pmm_backend="linear"))]
     pub fn new(max_iter: usize, backend: &str, alpha: f64, pmm_backend: &str) -> Mice {
         let backend = match backend.to_lowercase().as_str() {
             "linear" => Box::new(LinearRegression::new()) as Box<dyn Solver>,
@@ -106,21 +106,27 @@ impl Mice {
     }
 
     fn fit_impl(&mut self, data: &Array2<f64>) -> &Self {
-        self.models = Vec::with_capacity(data.shape()[1]);
         let mut imputed = SimpleImputer::new().fit_impl(&data).impute(&data);
+        let mut models: Vec<_> = (0..data.ncols())
+            .into_iter()
+            .map(|_| self.backend.clone())
+            .collect();
+        let imp_ptr = std::sync::Arc::new(SendPtr(imputed.as_mut_ptr()));
         for i in 0..self.max_iter {
-            for j in 0..data.shape()[1] {
+            models.par_iter_mut().enumerate().for_each(|(j, m)| {
                 let (x_train, x_test, y_train, missing_indices) = split(&imputed, data, j);
-                self.backend.fit(&x_train, &y_train);
-                for (k, v) in self.backend.predict(&x_test).iter().enumerate() {
+                m.fit(&x_train, &y_train);
+                let ptr = std::sync::Arc::clone(&imp_ptr);
+                for (k, v) in m.predict(&x_test).iter().enumerate() {
                     // let old = imputed[[missing_indices[k], j]];
-                    imputed[[missing_indices[k], j]] = *v;
+                    // imputed[[missing_indices[k], j]] = *v;
+                    unsafe {
+                        *ptr.0.add(missing_indices[k] * data.ncols() + j) = *v;
+                    }
                 }
-                if i == self.max_iter - 1 {
-                    self.models.push(self.backend.clone());
-                }
-            }
+            });
         }
+        self.models = models;
         self
     }
 }
@@ -137,7 +143,7 @@ fn split(
             imputed.slice(ndarray::s![.., col + 1..]),
         ],
     )
-    .unwrap();
+    .expect("Failed concatenate views!");
     let y = missing.slice(ndarray::s![.., col]);
     // Build index lists
     let (missing_idx, observed_idx): (Vec<_>, Vec<_>) =

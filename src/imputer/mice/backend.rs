@@ -15,7 +15,10 @@ pub trait Solver: Send + Sync {
         } else {
             points
         };
-        let weights = self.coefficients().as_ref().unwrap();
+        let weights = self
+            .coefficients()
+            .as_ref()
+            .expect("Unable to find weights!");
         points.dot(weights)
     }
     fn clone(&self) -> Box<dyn Solver>;
@@ -64,7 +67,11 @@ impl Solver for LinearRegression {
         } else {
             data
         };
-        self.coefficients = Some(data.least_squares(&target).unwrap().solution);
+        self.coefficients = Some(
+            data.least_squares(&target)
+                .expect("No least squares solution possible")
+                .solution,
+        );
     }
     fn bias(&self) -> bool {
         self.bias
@@ -127,13 +134,17 @@ fn add_bias_column(x: &Array2<f64>) -> Array2<f64> {
     out
 }
 
+const PMM_BACKEND: &[&str] = &["linear", "ridge"];
 impl PMM {
     pub fn new(n_neighbors: usize, backend: &str, alpha: Option<f64>) -> PMM {
         let model = match backend.to_lowercase().as_str() {
             "linear" => Box::new(LinearRegression::new()) as Box<dyn Solver>,
             "ridge" => Box::new(Ridge::new(alpha.expect("Provide a Some(value) for alpha")))
                 as Box<dyn Solver>,
-            _ => panic!("Solver {backend} not supported!"),
+            _ => panic!(
+                "Solver {backend} not supported! List of supported backend for PMM {:?}",
+                PMM_BACKEND
+            ),
         };
         PMM {
             n_neighbors,
@@ -176,15 +187,16 @@ impl Solver for PMM {
     }
 
     fn predict(&self, points: &Array2<f64>) -> Array1<f64> {
-        let predictions = self.model.predict(points);
+        let predictions = self.model.predict(points).to_vec();
         let mut samples = Array1::zeros(points.nrows());
         let pool = self.pool.as_ref().expect("Call Fit before predict!");
-        for (i, p) in predictions.iter().enumerate() {
+
+        predictions.iter().enumerate().for_each(|(i, p)| {
             if self.n_neighbors >= pool.len() {
                 samples[i] = self.sample(&pool.to_vec());
             } else {
                 let mut top_k: Vec<f64> = vec![f64::MAX; self.n_neighbors]; //Array1::ones(self.n_neighbors) * f64::MAX;
-                let distances: Vec<f64> = pool.par_iter().map(|x| (x - p).abs()).collect();
+                let distances: Vec<f64> = pool.par_iter().map(|x| (x - p).powi(2).abs()).collect();
                 let (mut max_idx, mut max_val) = argmax(&top_k);
                 for (j, d) in distances.iter().enumerate() {
                     if d < &(max_val - p).abs() {
@@ -195,7 +207,7 @@ impl Solver for PMM {
                 top_k.retain(|&e| e < f64::MAX);
                 samples[i] = self.sample(&top_k);
             }
-        }
+        });
         samples
     }
 }
