@@ -11,6 +11,7 @@ pub struct Mice {
     backend: Box<dyn Solver>,
     models: Vec<Box<dyn Solver>>,
     is_fitted: bool,
+    init: SimpleImputer,
 }
 
 #[pymethods]
@@ -29,6 +30,7 @@ impl Mice {
             backend: backend,
             models: Vec::new(),
             is_fitted: false,
+            init: SimpleImputer::new(),
         }
     }
 
@@ -82,7 +84,7 @@ impl Mice {
 
     fn impute(&self, data: &Array2<f64>) -> Array2<f64> {
         // initial mean imputation
-        let mut imputed = SimpleImputer::new().fit_impl(&data).impute(&data);
+        let mut imputed = self.init.impute(&data);
         for _ in 0..self.max_iter {
             let imp_ptr = std::sync::Arc::new(SendPtr(imputed.as_mut_ptr()));
             let splits: Vec<_> = (0..data.ncols())
@@ -106,7 +108,7 @@ impl Mice {
     }
 
     fn fit_impl(&mut self, data: &Array2<f64>) -> &Self {
-        let mut imputed = SimpleImputer::new().fit_impl(&data).impute(&data);
+        let mut imputed = self.init.fit_impl(&data).impute(&data);
         let mut models: Vec<_> = (0..data.ncols())
             .into_iter()
             .map(|_| self.backend.clone())
