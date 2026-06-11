@@ -1,7 +1,11 @@
 use super::super::SimpleImputer;
 use crate::{
     imputer::missforest::backend::{self, RandomForest},
-    utils::{arr_to_out, constants::NOT_FITTED_ERR, pyany_to_vec},
+    utils::{
+        StringEncoding, arr_to_out,
+        constants::{ENCODING_WARN, NOT_FITTED_ERR},
+        pyany_to_vec,
+    },
 };
 use ndarray::parallel::prelude::*;
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
@@ -17,17 +21,19 @@ pub struct MissForest {
     rng: StdRng,
     max_depth: usize,
     min_samples_leaf: usize,
+    string_encoding: Option<StringEncoding>,
 }
 
 #[pymethods]
 impl MissForest {
     #[new]
-    #[pyo3(signature = (n_trees=15, max_depth=15, min_samples_leaf=5, seed=None))]
+    #[pyo3(signature = (n_trees=15, max_depth=15, min_samples_leaf=5, seed=None, encoding=None))]
     pub fn new(
         n_trees: usize,
         max_depth: usize,
         min_samples_leaf: usize,
         seed: Option<u64>,
+        encoding: Option<&str>,
     ) -> MissForest {
         let rng = if let Some(x) = seed {
             StdRng::seed_from_u64(x)
@@ -38,11 +44,15 @@ impl MissForest {
         MissForest {
             n_trees,
             is_fitted: false,
-            init: SimpleImputer::new(),
+            init: SimpleImputer::new(encoding),
             forrests: Vec::new(),
             rng,
             max_depth,
             min_samples_leaf,
+            string_encoding: match encoding {
+                None => None,
+                Some(_) => Some(StringEncoding::LabelEncoding),
+            },
         }
     }
 
@@ -53,9 +63,17 @@ impl MissForest {
             c"MissForest is currently experimental and may produce unexpected results.",
             1,
         )?;
-        let ((vec, nrows, ncols), _out, _enc) = pyany_to_vec(py, data, None)?;
         {
             let mut inner = slf.borrow_mut(py);
+            if let Some(_) = inner.string_encoding {
+                pyo3::PyErr::warn(
+                    py,
+                    &py.get_type::<pyo3::exceptions::PyUserWarning>(),
+                    ENCODING_WARN,
+                    1,
+                )?;
+            };
+            let ((vec, nrows, ncols), _out, _enc) = pyany_to_vec(py, data, &inner.string_encoding)?;
             let data: Array2<f64> = Array2::from_shape_vec((nrows, ncols), vec).unwrap();
             inner.fit_impl(&data);
             inner.is_fitted = true;
@@ -75,7 +93,7 @@ impl MissForest {
                 NOT_FITTED_ERR
             )));
         }
-        let ((vec, nrows, ncols), out, _enc) = pyany_to_vec(py, data, None)?;
+        let ((vec, nrows, ncols), out, _enc) = pyany_to_vec(py, data, &self.string_encoding)?;
         let imputed = self.impute(
             &Array2::from_shape_vec((nrows, ncols), vec)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?,

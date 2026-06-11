@@ -1,6 +1,6 @@
 use super::backend::{LinearRegression, PMM, Ridge, Solver};
 use crate::imputer::SimpleImputer;
-use crate::utils;
+use crate::utils::{self, StringEncoding, constants::ENCODING_WARN};
 use ndarray::{Array1, Array2, Axis};
 use pyo3::prelude::*;
 use rayon::prelude::*;
@@ -12,13 +12,20 @@ pub struct Mice {
     models: Vec<Box<dyn Solver>>,
     is_fitted: bool,
     init: SimpleImputer,
+    string_encoding: Option<StringEncoding>,
 }
 
 #[pymethods]
 impl Mice {
     #[new]
-    #[pyo3(signature = (max_iter=10, backend="linear", alpha=1.0, pmm_backend="linear"))]
-    pub fn new(max_iter: usize, backend: &str, alpha: f64, pmm_backend: &str) -> Mice {
+    #[pyo3(signature = (max_iter=10, backend="linear", alpha=1.0, pmm_backend="linear", encoding=None))]
+    pub fn new(
+        max_iter: usize,
+        backend: &str,
+        alpha: f64,
+        pmm_backend: &str,
+        encoding: Option<&str>,
+    ) -> Mice {
         let backend = match backend.to_lowercase().as_str() {
             "linear" => Box::new(LinearRegression::new()) as Box<dyn Solver>,
             "ridge" => Box::new(Ridge::new(alpha)) as Box<dyn Solver>,
@@ -30,14 +37,27 @@ impl Mice {
             backend: backend,
             models: Vec::new(),
             is_fitted: false,
-            init: SimpleImputer::new(),
+            string_encoding: match encoding {
+                None => None,
+                Some(_) => Some(StringEncoding::LabelEncoding),
+            },
+            init: SimpleImputer::new(encoding),
         }
     }
 
     pub fn fit(slf: Py<Self>, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
-        let ((vec, nrows, ncols), _out, _enc) = utils::pyany_to_vec(py, data, None)?;
         {
             let mut inner = slf.borrow_mut(py);
+            if let Some(_) = inner.string_encoding {
+                pyo3::PyErr::warn(
+                    py,
+                    &py.get_type::<pyo3::exceptions::PyUserWarning>(),
+                    ENCODING_WARN,
+                    1,
+                )?;
+            };
+            let ((vec, nrows, ncols), _out, _enc) =
+                utils::pyany_to_vec(py, data, &inner.string_encoding)?;
             inner.fit_impl(
                 &Array2::from_shape_vec((nrows, ncols), vec)
                     .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?,
@@ -58,7 +78,7 @@ impl Mice {
                 "Imputer is not fitted",
             )));
         }
-        let ((vec, nrows, ncols), out, enc) = utils::pyany_to_vec(py, data, None)?;
+        let ((vec, nrows, ncols), out, enc) = utils::pyany_to_vec(py, data, &self.string_encoding)?;
         let imputed = self.impute(
             &Array2::from_shape_vec((nrows, ncols), vec)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?,
@@ -71,15 +91,15 @@ impl Mice {
 impl Mice {
     #[allow(unused)]
     fn linear(max_iter: usize) -> Self {
-        Self::new(max_iter, "linear", 0.0, "linear")
+        Self::new(max_iter, "linear", 0.0, "linear", None)
     }
     #[allow(unused)]
     fn ridge(max_iter: usize, alpha: f64) -> Self {
-        Self::new(max_iter, "ridge", alpha, "linear")
+        Self::new(max_iter, "ridge", alpha, "linear", None)
     }
     #[allow(unused)]
     fn pmm(max_iter: usize) -> Self {
-        Self::new(max_iter, "pmm", 1.0, "linear")
+        Self::new(max_iter, "pmm", 1.0, "linear", None)
     }
 
     fn impute(&self, data: &Array2<f64>) -> Array2<f64> {
@@ -114,7 +134,7 @@ impl Mice {
             .map(|_| self.backend.clone())
             .collect();
         let imp_ptr = std::sync::Arc::new(SendPtr(imputed.as_mut_ptr()));
-        for i in 0..self.max_iter {
+        for _ in 0..self.max_iter {
             models.par_iter_mut().enumerate().for_each(|(j, m)| {
                 let (x_train, x_test, y_train, missing_indices) = split(&imputed, data, j);
                 m.fit(&x_train, &y_train);
@@ -171,7 +191,7 @@ mod test {
     #[test]
     fn move_away_from_initial() {
         let data = Array2::from_shape_vec((8, 4), POINTS.to_vec()).unwrap();
-        let simple = SimpleImputer::new().fit_impl(&data).impute(&data);
+        let simple = SimpleImputer::new(None).fit_impl(&data).impute(&data);
         let mice = Mice::linear(2).fit_impl(&data).impute(&data);
         let diff = simple.iter().zip(&mice).any(|(p, q)| (p - q).abs() > 1e-6);
         println!("Simple: \n{}\n", &simple);

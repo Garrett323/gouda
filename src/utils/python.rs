@@ -40,7 +40,7 @@ fn label_encode(values: &[String]) -> (Vec<f64>, HashMap<String, u64>) {
 pub fn pyany_to_vec(
     py: Python<'_>,
     obj: &Bound<'_, PyAny>,
-    string_encoding: Option<StringEncoding>,
+    string_encoding: &Option<StringEncoding>,
 ) -> PyResult<((Vec<f64>, usize, usize), OUT, Option<EncodingInfo>)> {
     // 1. numpy — try fast path first, fall back to buffer protocol
     if let Ok(arr) = obj.extract::<PyReadonlyArray2<f64>>() {
@@ -66,7 +66,7 @@ pub fn pyany_to_vec(
             return if dtype_name == "object" {
                 match string_encoding {
                     None => panic!("Provide a way to encode String!"),
-                    Some(ref enc) => {
+                    Some(enc) => {
                         let (data, enc_info) = encode_object_array(obj, nrows, ncols, enc);
                         Ok(((data, nrows, ncols), OUT::Numpy, Some(enc_info)))
                     }
@@ -97,7 +97,7 @@ pub fn pyany_to_vec(
         let has_strings = check_for_strs(&obj);
         return if has_strings {
             match string_encoding {
-                Some(ref enc) => {
+                Some(enc) => {
                     let (data, enc_info) = encode_dataframe(py, obj, nrows, ncols, &columns, enc)?;
                     Ok((
                         (data, nrows, ncols),
