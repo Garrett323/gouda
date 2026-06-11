@@ -111,11 +111,7 @@ impl KnnImputer {
     ) -> Vec<f64> {
         let mut imputed = data.to_vec();
         let imp_ptr = std::sync::Arc::new(SendPtr(imputed.as_mut_ptr()));
-        // let mut i = 0;
-
         let base = self.data.as_ref().unwrap();
-        // let mut distances = vec![0.0; nrows];
-        // let mut indices: Vec<usize> = (0..nrows).collect();
         (0..nrows).into_par_iter().for_each(|row| {
             let cols: Vec<usize> = (0..base.ncols())
                 .filter(|j| data[row * base.ncols() + j].is_nan())
@@ -142,33 +138,6 @@ impl KnnImputer {
                 }
             }
         });
-        // while i < data.len() {
-        //     if data[i].is_nan() {
-        //         // figure out point and impute
-        //         let row = i / base.shape()[1];
-        //         let col = i % base.shape()[1];
-        //         let cols: Vec<usize> = (col..base.ncols())
-        //             .filter(|j| data[i + j - col].is_nan())
-        //             .collect();
-        //         let p = &data[row * base.ncols()..row * base.ncols() + base.ncols()]; //base.row(row);
-        //         // distances.par_iter_mut().enumerate().for_each(|(r, d)| {
-        //         //     *d = if r == row {
-        //         //         f64::MAX
-        //         //     } else {
-        //         //         dist(&self, p, &base.row(r).as_slice().unwrap())
-        //         //     }
-        //         // });
-        //         // // indices.sort_by(|&a, &b| distances[a].total_cmp(&distances[b]));
-        //         // indices.par_sort_unstable_by(|&a, &b| distances[a].total_cmp(&distances[b]));
-        //         // let avgs = self.average(&indices, &cols, &self.get_weights(&distances));
-        //         // for (avg, c) in avgs.into_iter().zip(&cols) {
-        //         //     imputed[i + c - col] = avg;
-        //         // }
-        //         i += base.shape()[1] - col;
-        //     } else {
-        //         i += 1;
-        //     }
-        // }
         imputed
     }
 
