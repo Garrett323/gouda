@@ -1,4 +1,8 @@
-use crate::utils::{constants::NOT_FITTED_ERR, pyany_to_vec};
+use crate::utils::{
+    StringEncoding,
+    constants::{ENCODING_WARN, NOT_FITTED_ERR},
+    pyany_to_vec,
+};
 use ndarray::Array2;
 use numpy::{IntoPyArray, PyArray2};
 use pyo3::prelude::*;
@@ -7,24 +11,38 @@ use pyo3::prelude::*;
 pub struct SimpleImputer {
     sample_means: Option<Vec<f64>>,
     // sample_mode: Option<Vec<f64>>,// needed when implementing categoricals
+    string_encoding: Option<StringEncoding>,
     is_fitted: bool,
 }
 
 #[pymethods]
 impl SimpleImputer {
     #[new]
-    pub fn new() -> SimpleImputer {
+    #[pyo3(signature = (encoding=None))]
+    pub fn new(encoding: Option<&str>) -> SimpleImputer {
         SimpleImputer {
             sample_means: None,
             // sample_mode: None,
+            string_encoding: match encoding {
+                Some(_) => Some(StringEncoding::LabelEncoding),
+                None => None,
+            },
             is_fitted: false,
         }
     }
 
     pub fn fit(slf: Py<Self>, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
-        let ((vec, nrows, ncols), _out, _enc) = pyany_to_vec(py, data, None)?;
         {
             let mut inner = slf.borrow_mut(py);
+            if let Some(_) = inner.string_encoding {
+                pyo3::PyErr::warn(
+                    py,
+                    &py.get_type::<pyo3::exceptions::PyUserWarning>(),
+                    ENCODING_WARN,
+                    1,
+                )?;
+            };
+            let ((vec, nrows, ncols), _out, _enc) = pyany_to_vec(py, data, &inner.string_encoding)?;
             let data: Array2<f64> = Array2::from_shape_vec((nrows, ncols), vec).unwrap();
             inner.fit_impl(&data);
             inner.is_fitted = true;
@@ -44,7 +62,7 @@ impl SimpleImputer {
                 NOT_FITTED_ERR
             )));
         }
-        let ((vec, nrows, ncols), _out, _enc) = pyany_to_vec(py, data, None)?;
+        let ((vec, nrows, ncols), _out, _enc) = pyany_to_vec(py, data, &self.string_encoding)?;
         let imputed = self.impute(
             &Array2::from_shape_vec((nrows, ncols), vec)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?,
@@ -116,7 +134,7 @@ mod tests {
 
     #[test]
     fn test_impute() {
-        let mut simple = SimpleImputer::new();
+        let mut simple = SimpleImputer::new(None);
         let data = Array2::from_shape_vec((5, 5), DATA.to_owned()).unwrap();
         let imputed = simple.fit_impl(&data).impute(&data);
         println!("Means: {:?}", simple.sample_means.as_ref().unwrap());
@@ -144,7 +162,7 @@ mod tests {
             (0.9573324 + 0.98189233 + 0.50595314 + 0.62366235) / 4.0,
             (0.45384631 + 0.5011135 + 0.12229672) / 3.0,
         ];
-        let mut simple = SimpleImputer::new();
+        let mut simple = SimpleImputer::new(None);
         let data = Array2::from_shape_vec((5, 5), DATA.to_owned()).unwrap();
         simple.fit_impl(&data);
         for (gt, estimate) in MEANS.iter().zip(simple.sample_means.as_ref().unwrap()) {

@@ -1,17 +1,29 @@
-use crate::utils;
+use crate::utils::{self, SendPtr, StringEncoding, constants::ENCODING_WARN};
+
 use ndarray::Array2;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use rayon::prelude::*;
+
+enum Weights {
+    Uniform,
+    Distance,
+}
+
+enum Metrics {
+    NanEuclid,
+    ExpectedDistance,
+}
 
 #[pyclass]
 pub struct KnnImputer {
     #[pyo3(get, set)]
     k: usize,
     data: Option<Array2<f64>>,
+    string_encoding: Option<StringEncoding>,
     is_fitted: bool,
-    metric: String,
-    weights: String,
+    metric: Metrics,
+    weights: Weights,
 }
 
 const ALLOWED_WEIGHTS: [&str; 2] = ["uniform", "distance"];
@@ -20,23 +32,44 @@ const ALLOWED_METRICS: [&str; 2] = ["nan_euclid", "expected_distance"];
 #[pymethods]
 impl KnnImputer {
     #[new]
-    #[pyo3(signature = (k=5, metric="nan_euclid", weights="uniform"))]
-    pub fn new(k: usize, metric: &str, weights: &str) -> KnnImputer {
+    #[pyo3(signature = (k=5, metric="nan_euclid", weights="uniform", encoding=None))]
+    pub fn new(k: usize, metric: &str, weights: &str, encoding: Option<&str>) -> KnnImputer {
         assert!(ALLOWED_WEIGHTS.contains(&weights));
         KnnImputer::sanity_check(&metric, &weights);
         KnnImputer {
             k,
             data: None,
             is_fitted: false,
-            metric: metric.to_owned(),
-            weights: weights.to_owned(),
+            metric: match metric {
+                "nan_euclid" => Metrics::NanEuclid,
+                "expected_distance" => Metrics::ExpectedDistance,
+                _ => panic!("metric parameter not supported, {:?}", ALLOWED_METRICS),
+            },
+            weights: match weights {
+                "uniform" => Weights::Uniform,
+                "distance" => Weights::Distance,
+                _ => panic!("weight parameter not supported, {:?}", ALLOWED_WEIGHTS),
+            },
+            string_encoding: match encoding {
+                None => None,
+                Some(_) => Some(StringEncoding::LabelEncoding),
+            },
         }
     }
 
     pub fn fit(slf: Py<Self>, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
-        let ((vec, nrows, ncols), _out, _enc) = utils::pyany_to_vec(py, data, None)?;
         {
             let mut inner = slf.borrow_mut(py);
+            if let Some(_) = inner.string_encoding {
+                pyo3::PyErr::warn(
+                    py,
+                    &py.get_type::<pyo3::exceptions::PyUserWarning>(),
+                    ENCODING_WARN,
+                    1,
+                )?;
+            };
+            let ((vec, nrows, ncols), _out, _enc) =
+                utils::pyany_to_vec(py, data, &inner.string_encoding)?;
             inner.data = Some(Array2::from_shape_vec((nrows, ncols), vec).unwrap());
             inner.is_fitted = true;
         } // dropping inner here (releasing the mutex)
@@ -54,17 +87,12 @@ impl KnnImputer {
                 "Imputer is not fitted",
             )));
         }
-        let ((data, nrows, ncols), out, enc) = utils::pyany_to_vec(py, data, None)?;
+        let ((data, nrows, ncols), out, enc) =
+            utils::pyany_to_vec(py, data, &self.string_encoding)?;
         // actual method
-        let dist = match self.metric.as_str() {
-            "nan_euclid" => Self::nan_euclid,
-            "expected_distance" => Self::expected_distance,
-            m => {
-                return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
-                    "{} is a unknown metric",
-                    m
-                )));
-            }
+        let dist = match self.metric {
+            Metrics::NanEuclid => Self::nan_euclid,
+            Metrics::ExpectedDistance => Self::expected_distance,
         };
         let imputed = self.brute_force(&data, nrows, dist);
         // return python object
@@ -82,38 +110,34 @@ impl KnnImputer {
         dist: fn(&KnnImputer, &[f64], &[f64]) -> f64,
     ) -> Vec<f64> {
         let mut imputed = data.to_vec();
-        let mut i = 0;
-
+        let imp_ptr = std::sync::Arc::new(SendPtr(imputed.as_mut_ptr()));
         let base = self.data.as_ref().unwrap();
-        let mut distances = vec![0.0; nrows];
-        let mut indices: Vec<usize> = (0..nrows).collect();
-        while i < data.len() {
-            if data[i].is_nan() {
-                // figure out point and impute
-                let row = i / base.shape()[1];
-                let col = i % base.shape()[1];
-                let cols: Vec<usize> = (col..base.ncols())
-                    .filter(|j| data[i + j - col].is_nan())
-                    .collect();
-                let p = &data[row * base.ncols()..row * base.ncols() + base.ncols()]; //base.row(row);
-                distances.par_iter_mut().enumerate().for_each(|(r, d)| {
-                    *d = if r == row {
+        (0..nrows).into_par_iter().for_each(|row| {
+            let cols: Vec<usize> = (0..base.ncols())
+                .filter(|j| data[row * base.ncols() + j].is_nan())
+                .collect();
+            let p = &data[row * base.ncols()..row * base.ncols() + base.ncols()]; //base.row(row);
+            let distances: Vec<f64> = (0..nrows)
+                .into_par_iter()
+                .map(|r| {
+                    if r == row {
                         f64::MAX
                     } else {
                         dist(&self, p, &base.row(r).as_slice().unwrap())
                     }
-                });
-                // indices.sort_by(|&a, &b| distances[a].total_cmp(&distances[b]));
-                indices.par_sort_unstable_by(|&a, &b| distances[a].total_cmp(&distances[b]));
-                let avgs = self.average(&indices, &cols, &self.get_weights(&distances));
-                for (avg, c) in avgs.into_iter().zip(&cols) {
-                    imputed[i + c - col] = avg;
+                })
+                .collect();
+            let mut indices: Vec<_> = (0..nrows).collect();
+            indices.par_sort_unstable_by(|&a, &b| distances[a].total_cmp(&distances[b]));
+            let avgs = self.average(&indices, &cols, &self.get_weights(&distances));
+            let ptr = std::sync::Arc::clone(&imp_ptr);
+            for (avg, c) in avgs.into_iter().zip(&cols) {
+                // imputed[row * base.ncols() + c] = avg;
+                unsafe {
+                    *ptr.0.add(row * base.ncols() + c) = avg;
                 }
-                i += base.shape()[1] - col;
-            } else {
-                i += 1;
             }
-        }
+        });
         imputed
     }
 
@@ -145,10 +169,9 @@ impl KnnImputer {
     }
 
     fn get_weights(&self, distances: &[f64]) -> Vec<f64> {
-        match self.weights.as_str() {
-            "uniform" => distances.iter().map(|_| 1.0 / self.k as f64).collect(),
-            "distance" => distances.iter().map(|d| 1.0 / d).collect(),
-            w => panic!("Unknown weight {}", w),
+        match self.weights {
+            Weights::Uniform => distances.iter().map(|_| 1.0 / self.k as f64).collect(),
+            Weights::Distance => distances.iter().map(|d| 1.0 / d).collect(),
         }
     }
 
@@ -214,7 +237,7 @@ mod tests {
 
     #[test]
     fn nan_euclid() {
-        let knn = KnnImputer::new(5, "nan_euclid", "uniform");
+        let knn = KnnImputer::new(5, "nan_euclid", "uniform", None);
         let p = &[f64::NAN, 0.22129885, 0.8863533, 0.50595314, 0.5011135];
 
         for (e, q) in EXPECTED_EUCLID.iter().zip(POINTS_EUCLID) {
@@ -250,7 +273,7 @@ mod tests {
             1.777112,
             0.666,
         ];
-        let knn = KnnImputer::new(5, "expected_distance", "uniform");
+        let knn = KnnImputer::new(5, "expected_distance", "uniform", None);
         for (e, q) in expected.iter().zip(points) {
             let result = knn.expected_distance(p, q);
             assert!(
@@ -264,7 +287,7 @@ mod tests {
 
     #[test]
     fn compare() {
-        let knn = KnnImputer::new(5, "nan_euclid", "uniform");
+        let knn = KnnImputer::new(5, "nan_euclid", "uniform", None);
         let (a, b) = (&[1.0, 2.0], &[3.0, 4.0]);
         let diff = knn.nan_euclid(a, b).sqrt() - knn.expected_distance(a, b);
         assert!((diff).abs() < 1e-10, "Expected: 0.0; Actual {}", diff);

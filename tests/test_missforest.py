@@ -5,6 +5,7 @@ import pytest
 from gouda import MissForest, SimpleImputer
 import time
 
+
 def test_nans():
     data = np.random.rand(500, 5)
     data[data < 0.48] = np.nan
@@ -12,6 +13,7 @@ def test_nans():
     print("data:\n", data)
     print("imputed:\n", imputed)
     assert not np.isnan(imputed).any(), "Imputed still has missing values"
+
 
 def test_not_simple():
     data = np.random.rand(500, 5)
@@ -27,7 +29,7 @@ def test_not_simple():
 @pytest.mark.heavy
 @pytest.mark.filterwarnings("ignore::UserWarning")
 def test_time():
-    data = np.random.rand(500, 12)
+    data = np.random.rand(500, 5)
     data[data < 0.48] = np.nan
     data = pd.DataFrame(data)
     N = 3

@@ -1,4 +1,8 @@
-use crate::utils::{self, constants::NOT_FITTED_ERR, pyany_to_vec};
+use crate::utils::{
+    self, StringEncoding,
+    constants::{ENCODING_WARN, NOT_FITTED_ERR},
+    pyany_to_vec,
+};
 use ndarray::Array2;
 use pyo3::prelude::*;
 
@@ -6,14 +10,20 @@ use pyo3::prelude::*;
 pub struct ConstantImputer {
     value: f64,
     is_fitted: bool,
+    string_encoding: Option<StringEncoding>,
 }
 
 #[pymethods]
 impl ConstantImputer {
     #[new]
-    pub fn new(value: f64) -> ConstantImputer {
+    #[pyo3(signature = (value=0.0, encoding=None))]
+    pub fn new(value: f64, encoding: Option<&str>) -> ConstantImputer {
         ConstantImputer {
             value,
+            string_encoding: match encoding {
+                Some(_) => Some(StringEncoding::LabelEncoding),
+                None => None,
+            },
             is_fitted: false,
         }
     }
@@ -22,6 +32,7 @@ impl ConstantImputer {
     pub fn zero() -> ConstantImputer {
         ConstantImputer {
             value: 0.0,
+            string_encoding: Some(StringEncoding::LabelEncoding),
             is_fitted: false,
         }
     }
@@ -29,6 +40,14 @@ impl ConstantImputer {
     pub fn fit(slf: Py<Self>, py: Python<'_>, _data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
         {
             let mut inner = slf.borrow_mut(py);
+            if let Some(_) = inner.string_encoding {
+                pyo3::PyErr::warn(
+                    py,
+                    &py.get_type::<pyo3::exceptions::PyUserWarning>(),
+                    ENCODING_WARN,
+                    1,
+                )?;
+            };
             inner.is_fitted = true;
         } // dropping inner here (releasing the mutex)
         Ok(slf)
@@ -46,7 +65,7 @@ impl ConstantImputer {
                 NOT_FITTED_ERR
             )));
         }
-        let ((vec, nrows, ncols), out, enc) = pyany_to_vec(py, data, None)?;
+        let ((vec, nrows, ncols), out, enc) = pyany_to_vec(py, data, &self.string_encoding)?;
         let imputed = self.impute(&Array2::from_shape_vec((nrows, ncols), vec).unwrap());
         // return python object
         let array = ndarray::Array2::from_shape_vec((nrows, ncols), imputed)
@@ -73,7 +92,7 @@ mod tests {
 
     #[test]
     fn test_impute() {
-        let imputer = ConstantImputer::new(7.0);
+        let imputer = ConstantImputer::new(7.0, None);
         let data = Array2::from_shape_vec((5, 5), DATA.to_owned()).unwrap();
         let imputed = imputer.impute(&data);
         for i in 0..DATA.len() {

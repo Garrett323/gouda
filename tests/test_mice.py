@@ -1,9 +1,10 @@
 import numpy as np
 from sklearn.experimental import enable_iterative_imputer
-from sklearn.impute import IterativeImputer 
+from sklearn.impute import IterativeImputer
 import pytest
 from gouda import Mice, SimpleImputer
 import time
+
 
 def test_nans():
     data = np.random.rand(500, 5)
@@ -21,22 +22,26 @@ def test_nans():
     print("imputed:\n", imputed)
     assert not np.isnan(imputed).any(), "Imputed still has missing values"
 
+
 def test_iterations_work():
     data = np.random.rand(500, 5)
     data[data < 0.48] = np.nan
     imputed = Mice(backend="linear", max_iter=2).fit(data).transform(data)
-    imputed2 = Mice(backend="linear",max_iter=2).fit(data).transform(data)
-    imputed3 = Mice(backend="linear",max_iter=4).fit(data).transform(data)
+    imputed2 = Mice(backend="linear", max_iter=2).fit(data).transform(data)
+    imputed3 = Mice(backend="linear", max_iter=4).fit(data).transform(data)
     print("data:\n", data)
     print("imputed:\n", imputed)
-    assert np.allclose(imputed, imputed2), "Unexpected difference between different iterations"
+    assert np.allclose(
+        imputed, imputed2), "Unexpected difference between different iterations"
     print("imputed3:\n", imputed3)
-    assert not np.allclose(imputed, imputed3), "No difference between iterations"
+    assert not np.allclose(
+        imputed, imputed3), "No difference between iterations"
+
 
 def test_not_simple():
     data = np.random.rand(500, 5)
     data[data < 0.48] = np.nan
-    imputed = Mice(backend="linear",max_iter=2).fit(data).transform(data)
+    imputed = Mice(backend="linear", max_iter=2).fit(data).transform(data)
     imputed_simple = SimpleImputer().fit(data).transform(data)
     print("data:\n", data)
     print("imputed:\n", imputed)
@@ -75,5 +80,5 @@ def test_time():
     elapsed_rs = sorted(times_rs)[N // 2]  # median
     elapsed_sk = sorted(times_sk)[N // 2]
 
-    assert elapsed_rs < elapsed_sk , f"Rust: {
+    assert 4 * elapsed_rs < elapsed_sk, f"Rust: {
         elapsed_rs}ns  sklearn: {elapsed_sk}ns"
