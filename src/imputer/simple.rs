@@ -1,11 +1,9 @@
-use crate::utils::{
-    StringEncoding,
-    constants::{ENCODING_WARN, NOT_FITTED_ERR},
-    pyany_to_vec,
-};
-use ndarray::Array2;
+use crate::utils::{StringEncoding, arr_to_out, constants::NOT_FITTED_ERR, pyany_to_vec};
+use ndarray::{Array2, ArrayView2};
 use numpy::{IntoPyArray, PyArray2};
 use pyo3::prelude::*;
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use std::collections::HashMap;
 
 #[pyclass]
 pub struct SimpleImputer {
@@ -34,17 +32,13 @@ impl SimpleImputer {
     pub fn fit(slf: Py<Self>, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
         {
             let mut inner = slf.borrow_mut(py);
-            if let Some(_) = inner.string_encoding {
-                pyo3::PyErr::warn(
-                    py,
-                    &py.get_type::<pyo3::exceptions::PyUserWarning>(),
-                    ENCODING_WARN,
-                    1,
-                )?;
+            let (arr, _out, _enc) = pyany_to_vec(py, data, &inner.string_encoding)?;
+            let ids = if let Some(enc) = _enc {
+                Some(enc.string_column_indices)
+            } else {
+                None
             };
-            let ((vec, nrows, ncols), _out, _enc) = pyany_to_vec(py, data, &inner.string_encoding)?;
-            let data: Array2<f64> = Array2::from_shape_vec((nrows, ncols), vec).unwrap();
-            inner.fit_impl(&data);
+            inner.fit_impl(&arr, ids);
             inner.is_fitted = true;
         } // dropping inner here (releasing the mutex)
         Ok(slf)
@@ -54,7 +48,7 @@ impl SimpleImputer {
         &self,
         py: Python<'py>,
         data: &Bound<'_, PyAny>,
-    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    ) -> PyResult<Bound<'py, PyAny>> {
         // check if fitted
         if !self.is_fitted {
             return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
@@ -62,36 +56,60 @@ impl SimpleImputer {
                 NOT_FITTED_ERR
             )));
         }
-        let ((vec, nrows, ncols), _out, _enc) = pyany_to_vec(py, data, &self.string_encoding)?;
-        let imputed = self.impute(
-            &Array2::from_shape_vec((nrows, ncols), vec)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?,
-        );
+        let (arr, out, enc) = pyany_to_vec(py, data, &self.string_encoding)?;
+        let imputed = self.impute(&arr);
         // return python object
-        Ok(imputed.into_pyarray(py))
+        arr_to_out(py, &imputed, out, enc)
     }
 }
 
 impl SimpleImputer {
-    pub fn fit_impl(&mut self, data: &Array2<f64>) -> &Self {
-        let means = self.get_means(&data);
+    pub fn fit_impl(&mut self, data: &Array2<f64>, categories: Option<Vec<usize>>) -> &Self {
+        let mut means = self.get_means(&data);
+        if let Some(v) = categories {
+            let modes = self.get_modes(data.view(), &v);
+            for (&categorical, mode) in v.iter().zip(modes) {
+                means[categorical] = mode;
+            }
+        }
         self.sample_means = Some(means);
         return self;
     }
     fn get_means(&self, data: &Array2<f64>) -> Vec<f64> {
-        let mut means = vec![0.0; data.shape()[1]];
-        for i in 0..data.shape()[1] {
-            let mut nnans = 0.0;
-            for entry in data.column(i).iter() {
-                if entry.is_nan() {
-                    nnans += 1.0;
-                    continue;
+        (0..data.ncols())
+            .into_par_iter()
+            .map(|i| {
+                let mut nnans = 0.0;
+                let mut mean = 0.0;
+                for entry in data.column(i).iter() {
+                    if entry.is_nan() {
+                        nnans += 1.0;
+                        continue;
+                    }
+                    mean += entry;
                 }
-                means[i] += entry;
-            }
-            means[i] /= data.shape()[0] as f64 - nnans;
-        }
-        means
+                mean /= data.nrows() as f64 - nnans;
+                mean
+            })
+            .collect()
+    }
+
+    fn get_modes(&self, data: ArrayView2<f64>, categories: &Vec<usize>) -> Vec<f64> {
+        categories
+            .par_iter()
+            .map(|&idx| {
+                let mut counts: HashMap<usize, usize> = HashMap::new();
+                let col = data.column(idx);
+                for &x in col {
+                    *counts.entry(x as usize).or_insert(0) += 1;
+                }
+                counts
+                    .into_iter()
+                    .max_by_key(|&(_, count)| count)
+                    .map(|(val, _)| val)
+                    .expect("Tried to find mode on empty column!") as f64
+            })
+            .collect()
     }
 
     pub fn impute(&self, data: &Array2<f64>) -> Array2<f64> {
@@ -136,7 +154,7 @@ mod tests {
     fn test_impute() {
         let mut simple = SimpleImputer::new(None);
         let data = Array2::from_shape_vec((5, 5), DATA.to_owned()).unwrap();
-        let imputed = simple.fit_impl(&data).impute(&data);
+        let imputed = simple.fit_impl(&data, None).impute(&data);
         println!("Means: {:?}", simple.sample_means.as_ref().unwrap());
         println!("Data: {:?}", DATA);
         println!("Expected: {:?}", EXPECTED);
@@ -164,7 +182,7 @@ mod tests {
         ];
         let mut simple = SimpleImputer::new(None);
         let data = Array2::from_shape_vec((5, 5), DATA.to_owned()).unwrap();
-        simple.fit_impl(&data);
+        simple.fit_impl(&data, None);
         for (gt, estimate) in MEANS.iter().zip(simple.sample_means.as_ref().unwrap()) {
             let diff = gt - estimate;
             assert!(

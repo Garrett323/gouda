@@ -56,12 +56,8 @@ impl Mice {
                     1,
                 )?;
             };
-            let ((vec, nrows, ncols), _out, _enc) =
-                utils::pyany_to_vec(py, data, &inner.string_encoding)?;
-            inner.fit_impl(
-                &Array2::from_shape_vec((nrows, ncols), vec)
-                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?,
-            );
+            let (arr, _out, _enc) = utils::pyany_to_vec(py, data, &inner.string_encoding)?;
+            inner.fit_impl(&arr);
             inner.is_fitted = true;
         } // dropping inner here (releasing the mutex)
         Ok(slf)
@@ -78,11 +74,8 @@ impl Mice {
                 "Imputer is not fitted",
             )));
         }
-        let ((vec, nrows, ncols), out, enc) = utils::pyany_to_vec(py, data, &self.string_encoding)?;
-        let imputed = self.impute(
-            &Array2::from_shape_vec((nrows, ncols), vec)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?,
-        );
+        let (arr, out, enc) = utils::pyany_to_vec(py, data, &self.string_encoding)?;
+        let imputed = self.impute(&arr);
         // return python object
         utils::arr_to_out(py, &imputed, out, enc)
     }
@@ -122,7 +115,7 @@ impl Mice {
     }
 
     fn fit_impl(&mut self, data: &Array2<f64>) -> &Self {
-        let mut imputed = self.init.fit_impl(&data).impute(&data);
+        let mut imputed = self.init.fit_impl(&data, None).impute(&data);
         let mut models: Vec<_> = (0..data.ncols())
             .into_iter()
             .map(|_| self.backend.clone())
@@ -181,7 +174,7 @@ mod test {
     #[test]
     fn move_away_from_initial() {
         let data = Array2::from_shape_vec((8, 4), POINTS.to_vec()).unwrap();
-        let simple = SimpleImputer::new(None).fit_impl(&data).impute(&data);
+        let simple = SimpleImputer::new(None).fit_impl(&data, None).impute(&data);
         let mice = Mice::linear(2).fit_impl(&data).impute(&data);
         let diff = simple.iter().zip(&mice).any(|(p, q)| (p - q).abs() > 1e-6);
         println!("Simple: \n{}\n", &simple);

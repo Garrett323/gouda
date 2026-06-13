@@ -1,10 +1,11 @@
 use crate::utils::{
-    self, StringEncoding,
+    self,
     constants::{ENCODING_WARN, NOT_FITTED_ERR},
-    pyany_to_vec,
+    pyany_to_vec, StringEncoding,
 };
 use ndarray::Array2;
 use pyo3::prelude::*;
+use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 
 #[pyclass]
 pub struct ConstantImputer {
@@ -32,7 +33,7 @@ impl ConstantImputer {
     pub fn zero() -> ConstantImputer {
         ConstantImputer {
             value: 0.0,
-            string_encoding: Some(StringEncoding::LabelEncoding),
+            string_encoding: None,
             is_fitted: false,
         }
     }
@@ -65,23 +66,21 @@ impl ConstantImputer {
                 NOT_FITTED_ERR
             )));
         }
-        let ((vec, nrows, ncols), out, enc) = pyany_to_vec(py, data, &self.string_encoding)?;
-        let imputed = self.impute(&Array2::from_shape_vec((nrows, ncols), vec).unwrap());
+        let (arr, out, enc) = pyany_to_vec(py, data, &self.string_encoding)?;
+        let imputed = self.impute(&arr);
         // return python object
-        let array = ndarray::Array2::from_shape_vec((nrows, ncols), imputed)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-        utils::arr_to_out(py, &array, out, enc)
+        utils::arr_to_out(py, &imputed, out, enc)
     }
 }
 
 impl ConstantImputer {
-    fn impute(&self, data: &Array2<f64>) -> Vec<f64> {
-        let mut imputed = vec![self.value; data.len()];
-        for (i, e) in data.iter().enumerate() {
-            if !e.is_nan() {
-                imputed[i] = *e;
+    fn impute(&self, data: &Array2<f64>) -> Array2<f64> {
+        let mut imputed = data.clone(); //vec![self.value; data.len()];
+        imputed.par_iter_mut().for_each(|e| {
+            if e.is_nan() {
+                *e = self.value;
             }
-        }
+        });
         imputed
     }
 }
@@ -95,9 +94,9 @@ mod tests {
         let imputer = ConstantImputer::new(7.0, None);
         let data = Array2::from_shape_vec((5, 5), DATA.to_owned()).unwrap();
         let imputed = imputer.impute(&data);
-        for i in 0..DATA.len() {
+        for (i, &e) in imputed.iter().enumerate() {
             if DATA[i].is_nan() {
-                assert!((imputed[i] - 7.0).abs() < 1e-10);
+                assert!((e - 7.0).abs() < 1e-10);
             }
         }
     }

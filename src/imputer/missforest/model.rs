@@ -73,9 +73,8 @@ impl MissForest {
                     1,
                 )?;
             };
-            let ((vec, nrows, ncols), _out, _enc) = pyany_to_vec(py, data, &inner.string_encoding)?;
-            let data: Array2<f64> = Array2::from_shape_vec((nrows, ncols), vec).unwrap();
-            inner.fit_impl(&data);
+            let (arr, _out, _enc) = pyany_to_vec(py, data, &inner.string_encoding)?;
+            inner.fit_impl(&arr);
             inner.is_fitted = true;
         } // dropping inner here (releasing the mutex)
         Ok(slf)
@@ -93,11 +92,8 @@ impl MissForest {
                 NOT_FITTED_ERR
             )));
         }
-        let ((vec, nrows, ncols), out, _enc) = pyany_to_vec(py, data, &self.string_encoding)?;
-        let imputed = self.impute(
-            &Array2::from_shape_vec((nrows, ncols), vec)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?,
-        );
+        let (arr, out, _enc) = pyany_to_vec(py, data, &self.string_encoding)?;
+        let imputed = self.impute(&arr);
         // return python object
         arr_to_out(py, &imputed, out, _enc)
     }
@@ -117,7 +113,7 @@ impl MissForest {
             })
             .collect();
 
-        self.init.fit_impl(data);
+        self.init.fit_impl(data, None);
         let mut cur = self.init.impute(data);
         let mut nxt = cur.clone();
 
