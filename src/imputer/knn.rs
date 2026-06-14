@@ -1,5 +1,7 @@
 use crate::utils::{self, SendPtr, StringEncoding, constants::ENCODING_WARN};
+use ndarray::iter::Indices;
 use ndarray::{Array2, ArrayView1, ArrayView2};
+use ndarray_linalg::inner;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use rayon::prelude::*;
@@ -12,6 +14,7 @@ enum Weights {
 enum Metrics {
     NanEuclid,
     ExpectedDistance,
+    Gower(Option<Vec<f64>>),
 }
 
 #[pyclass]
@@ -20,13 +23,15 @@ pub struct KnnImputer {
     k: usize,
     data: Option<Array2<f64>>,
     string_encoding: Option<StringEncoding>,
+    cat_cols: Option<Vec<usize>>,
+    num_cols: Option<Vec<usize>>,
     is_fitted: bool,
     metric: Metrics,
     weights: Weights,
 }
 
 const ALLOWED_WEIGHTS: [&str; 2] = ["uniform", "distance"];
-const ALLOWED_METRICS: [&str; 2] = ["nan_euclid", "expected_distance"];
+const ALLOWED_METRICS: &[&str] = &["nan_euclid", "expected_distance", "gower"];
 
 #[pymethods]
 impl KnnImputer {
@@ -42,6 +47,7 @@ impl KnnImputer {
             metric: match metric {
                 "nan_euclid" => Metrics::NanEuclid,
                 "expected_distance" => Metrics::ExpectedDistance,
+                "gower" => Metrics::Gower(None),
                 _ => panic!("metric parameter not supported, {:?}", ALLOWED_METRICS),
             },
             weights: match weights {
@@ -49,6 +55,8 @@ impl KnnImputer {
                 "distance" => Weights::Distance,
                 _ => panic!("weight parameter not supported, {:?}", ALLOWED_WEIGHTS),
             },
+            cat_cols: None,
+            num_cols: None,
             string_encoding: match encoding {
                 None => None,
                 Some(_) => Some(StringEncoding::LabelEncoding),
@@ -59,15 +67,29 @@ impl KnnImputer {
     pub fn fit(slf: Py<Self>, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
         {
             let mut inner = slf.borrow_mut(py);
-            if let Some(_) = inner.string_encoding {
+            if let (Some(_), Metrics::ExpectedDistance | Metrics::NanEuclid) =
+                (&inner.string_encoding, &inner.metric)
+            {
                 pyo3::PyErr::warn(
                     py,
                     &py.get_type::<pyo3::exceptions::PyUserWarning>(),
-                    ENCODING_WARN,
+                    c"Passed Label encoding but didn't select a metric that supports categoricals! Please pass one of the metrics that support categoricals [gower]",
                     1,
                 )?;
             };
             let (arr, _out, _enc) = utils::pyany_to_vec(py, data, &inner.string_encoding)?;
+            if let Metrics::Gower(_) = inner.metric {
+                inner.metric = Metrics::Gower(Some(inner.span(arr.view())));
+                let indices = _enc
+                    .expect("Passed gower but didnt pass encoding strategy")
+                    .string_column_indices;
+                inner.num_cols = Some(
+                    (0..arr.ncols())
+                        .filter(|idx| !indices.contains(idx))
+                        .collect(),
+                );
+                inner.cat_cols = Some(indices);
+            }
             inner.data = Some(arr);
             inner.is_fitted = true;
         } // dropping inner here (releasing the mutex)
@@ -90,6 +112,7 @@ impl KnnImputer {
         let dist = match self.metric {
             Metrics::NanEuclid => Self::nan_euclid,
             Metrics::ExpectedDistance => Self::expected_distance,
+            Metrics::Gower(_) => Self::gower,
         };
         let imputed = self.brute_force(arr.view(), dist);
         // return python object
@@ -158,8 +181,6 @@ impl KnnImputer {
         } else {
             cols.iter().map(avg).collect()
         }
-        // for (j, c) in cols.iter().enumerate() {}
-        // avg
     }
 
     fn get_weights(&self, distances: &[f64]) -> Vec<f64> {
@@ -167,6 +188,25 @@ impl KnnImputer {
             Weights::Uniform => distances.iter().map(|_| 1.0 / self.k as f64).collect(),
             Weights::Distance => distances.iter().map(|d| 1.0 / d).collect(),
         }
+    }
+
+    fn span(&self, arr: ArrayView2<f64>) -> Vec<f64> {
+        (0..arr.ncols())
+            .into_par_iter()
+            .map(|i| {
+                let mut max = f64::NEG_INFINITY;
+                let mut min = f64::INFINITY;
+                arr.column(i).for_each(|&v| {
+                    if v > max {
+                        max = v
+                    }
+                    if v < min {
+                        min = v
+                    }
+                });
+                max - min
+            })
+            .collect()
     }
 
     fn sanity_check(metric: &str, weights: &str) {
@@ -223,6 +263,31 @@ impl KnnImputer {
         }
         total + total_obs.sqrt()
     }
+
+    fn gower(&self, a: ArrayView1<f64>, b: ArrayView1<f64>) -> f64 {
+        let ranges = if let Metrics::Gower(v) = &self.metric {
+            v.as_ref().unwrap().as_slice()
+        } else {
+            panic!("Set distance to gower when calling gower!");
+        };
+        let mut total = 0.0;
+        let mut valid = 0;
+        for &i in self.cat_cols.as_ref().unwrap() {
+            if !(a[i].is_nan() || b[i].is_nan()) {
+                total += (a[i] - b[i]).min(1.0);
+                valid += 1;
+            }
+        }
+        for &i in self.num_cols.as_ref().unwrap() {
+            let (x, y) = (a[i] / ranges[i], b[i] / ranges[i]);
+            if !(x.is_nan() || y.is_nan()) {
+                let d = x - y;
+                total += d * d;
+                valid += 1;
+            }
+        }
+        if valid == 0 { f64::INFINITY } else { total }
+    }
 }
 
 #[cfg(test)]
@@ -230,6 +295,23 @@ mod tests {
     use ndarray::Array1;
 
     use super::*; // has access to everything, including private
+
+    #[test]
+    fn gower() {
+        // gower is same as nan_euclid for numeric only
+        let knn = KnnImputer::new(5, "gower", "uniform", Some("label"));
+        let p = &[f64::NAN, 0.22129885, 0.8863533, 0.50595314, 0.5011135];
+
+        for (e, q) in EXPECTED_EUCLID.iter().zip(POINTS_EUCLID) {
+            let result = knn.nan_euclid(p.into(), q.into()).sqrt();
+            assert!(
+                (result - e).abs() < 1e-7,
+                "Expected: {}; Actual: {}",
+                e,
+                result
+            );
+        }
+    }
 
     #[test]
     fn nan_euclid() {

@@ -26,12 +26,16 @@ fn label_encode(values: &[String]) -> (Vec<f64>, HashMap<String, Option<u64>>) {
     let mut unique: Vec<&str> = values.iter().map(String::as_str).collect();
     unique.sort_unstable();
     unique.dedup();
+    let mut counter = 0;
     let map: HashMap<String, Option<u64>> = unique
         .iter()
-        .enumerate()
-        .map(|(i, &s)| match s {
+        .map(|&s| match s {
             "nan" | "NaN" => (s.to_owned(), None),
-            _ => (s.to_owned(), Some(i as u64)),
+            _ => (s.to_owned(), {
+                let e = Some(counter);
+                counter += 1;
+                e
+            }),
         })
         .collect();
 
