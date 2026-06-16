@@ -1,7 +1,5 @@
-use crate::utils::{self, SendPtr, StringEncoding, constants::ENCODING_WARN};
-use ndarray::iter::Indices;
+use crate::utils::{self, SendPtr, StringEncoding};
 use ndarray::{Array2, ArrayView1, ArrayView2};
-use ndarray_linalg::inner;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use rayon::prelude::*;

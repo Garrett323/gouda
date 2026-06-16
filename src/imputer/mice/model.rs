@@ -1,4 +1,4 @@
-use super::backend::{LinearRegression, PMM, Ridge, Solver};
+use super::backend::{LinearRegression, LogisticRegression, PMM, Ridge, Solver};
 use crate::imputer::SimpleImputer;
 use crate::utils::{self, SendPtr, StringEncoding, constants::ENCODING_WARN};
 use ndarray::{Array1, Array2, Axis};
@@ -9,10 +9,12 @@ use rayon::prelude::*;
 pub struct Mice {
     max_iter: usize,
     backend: Box<dyn Solver>,
+    cat_backend: Box<dyn Solver>,
     models: Vec<Box<dyn Solver>>,
     is_fitted: bool,
     init: SimpleImputer,
     string_encoding: Option<StringEncoding>,
+    cat_columns: Option<Vec<usize>>,
 }
 
 #[pymethods]
@@ -35,12 +37,14 @@ impl Mice {
         Mice {
             max_iter,
             backend: backend,
+            cat_backend: Box::new(LogisticRegression::new()),
             models: Vec::new(),
             is_fitted: false,
             string_encoding: match encoding {
                 None => None,
                 Some(_) => Some(StringEncoding::LabelEncoding),
             },
+            cat_columns: None,
             init: SimpleImputer::new(encoding),
         }
     }
@@ -48,15 +52,12 @@ impl Mice {
     pub fn fit(slf: Py<Self>, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
         {
             let mut inner = slf.borrow_mut(py);
+            let (arr, _out, enc) = utils::pyany_to_vec(py, data, &inner.string_encoding)?;
             if let Some(_) = inner.string_encoding {
-                pyo3::PyErr::warn(
-                    py,
-                    &py.get_type::<pyo3::exceptions::PyUserWarning>(),
-                    ENCODING_WARN,
-                    1,
-                )?;
-            };
-            let (arr, _out, _enc) = utils::pyany_to_vec(py, data, &inner.string_encoding)?;
+                inner.cat_columns = Some(enc.unwrap().string_column_indices);
+            } else {
+                inner.cat_columns = None;
+            }
             inner.fit_impl(&arr);
             inner.is_fitted = true;
         } // dropping inner here (releasing the mutex)
@@ -118,7 +119,13 @@ impl Mice {
         let mut imputed = self.init.fit_impl(&data, None).impute(&data);
         let mut models: Vec<_> = (0..data.ncols())
             .into_iter()
-            .map(|_| self.backend.clone())
+            .map(|i| {
+                if self.cat_columns.as_ref().map_or(false, |v| v.contains(&i)) {
+                    self.cat_backend.clone()
+                } else {
+                    self.backend.clone()
+                }
+            })
             .collect();
         let imp_ptr = std::sync::Arc::new(SendPtr(imputed.as_mut_ptr()));
         for _ in 0..self.max_iter {
@@ -127,8 +134,6 @@ impl Mice {
                 m.fit(&x_train, &y_train);
                 let ptr = std::sync::Arc::clone(&imp_ptr);
                 for (k, v) in m.predict(&x_test).iter().enumerate() {
-                    // let old = imputed[[missing_indices[k], j]];
-                    // imputed[[missing_indices[k], j]] = *v;
                     unsafe {
                         *ptr.0.add(missing_indices[k] * data.ncols() + j) = *v;
                     }
