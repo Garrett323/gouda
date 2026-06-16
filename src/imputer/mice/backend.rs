@@ -36,6 +36,11 @@ pub struct LinearRegression {
     bias: bool,
 }
 
+pub struct LogisticRegression {
+    coefficients: Option<Array1<f64>>,
+    bias: bool,
+}
+
 pub struct Ridge {
     alpha: f64,
     coefficients: Option<Array1<f64>>,
@@ -124,6 +129,56 @@ impl Solver for Ridge {
             bias: self.bias.clone(),
             alpha: self.alpha.clone(),
         })
+    }
+}
+
+impl LogisticRegression {
+    pub fn new() -> Self {
+        LogisticRegression {
+            coefficients: None,
+            bias: true,
+        }
+    }
+}
+
+impl Solver for LogisticRegression {
+    fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>) {
+        let data = if self.bias {
+            &add_bias_column(data)
+        } else {
+            data
+        };
+        self.coefficients = Some(
+            data.least_squares(&target)
+                .expect("No least squares solution possible")
+                .solution,
+        );
+    }
+    fn bias(&self) -> bool {
+        self.bias
+    }
+    fn coefficients(&self) -> &Option<Array1<f64>> {
+        &self.coefficients
+    }
+
+    fn clone(&self) -> Box<dyn Solver> {
+        Box::new(LogisticRegression {
+            coefficients: self.coefficients.clone(),
+            bias: self.bias.clone(),
+        })
+    }
+
+    fn predict(&self, points: &Array2<f64>) -> Array1<f64> {
+        let points = if self.bias() {
+            &add_bias_column(points)
+        } else {
+            points
+        };
+        let weights = self
+            .coefficients()
+            .as_ref()
+            .expect("Unable to find weights!");
+        1.0 / (1.0 + (-points.dot(weights)).exp())
     }
 }
 
@@ -224,6 +279,37 @@ fn argmax(arr: &[f64]) -> (usize, f64) {
 #[cfg(test)]
 mod test {
     use super::*; // has access to everything, including private
+
+    #[test]
+    fn log_reg_estimate() {
+        const DIM: usize = 5;
+        const N_POINTS: usize = 4;
+        const POINTS: &[f64] = &[1.0; DIM * N_POINTS];
+        const TOTAL: f64 = ((DIM - 1).pow(2) + (DIM - 1)) as f64 / 2.0;
+        const EXPECTED: &[f64] = &[TOTAL; N_POINTS];
+
+        let mut model = LogisticRegression::new();
+        model.coefficients = Some(
+            Array1::from_shape_vec(
+                DIM + 1,
+                (0..=DIM)
+                    .map(|x| if x < DIM { x as f64 } else { 0.0 })
+                    .collect(),
+            )
+            .unwrap(),
+        );
+
+        let estimates = model.predict(&Array2::from_shape_vec((4, 5), POINTS.to_vec()).unwrap());
+        assert!(EXPECTED.len() == estimates.len());
+        for &p in &estimates {
+            assert!(
+                p >= 0.0 && p <= 1.0,
+                "expected: {:?} actual: {:?}",
+                EXPECTED,
+                &estimates
+            );
+        }
+    }
 
     #[test]
     fn estimate() {
