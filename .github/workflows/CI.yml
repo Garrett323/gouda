@@ -115,9 +115,7 @@ jobs:
           - runner: windows-11-arm
             target: aarch64
             python_arch: arm64
-            # arm64-windows-static-md is a vcpkg community triplet; fall back to
-            # dynamic if it isn't cached in your environment.
-            vcpkg_triplet: arm64-windows
+            vcpkg_triplet: arm64-windows-static-md
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
