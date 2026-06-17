@@ -98,6 +98,8 @@ jobs:
   #         path: dist
   windows:
     runs-on: ${{ matrix.platform.runner }}
+    env:
+      VCPKG_ROOT: C:\vcpkg
     strategy:
       matrix:
         platform:
