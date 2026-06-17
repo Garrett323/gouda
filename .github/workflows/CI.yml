@@ -124,6 +124,7 @@ jobs:
           architecture: ${{ matrix.platform.python_arch }}
       - name: Install OpenBLAS via vcpkg
         run: |
+          $env:VCPKG_ROOT="C:\vcpkg"
           vcpkg install openblas:${{ matrix.platform.vcpkg_triplet }}
           # Expose the install root so the openblas-src / blas-sys build scripts
           # can locate headers and libs without pkg-config.
