@@ -21,3 +21,9 @@ openblas-src = "0.10.16"
 [dependencies.openssl-sys]
 version = "0.9"
 features = ["vendored"]
+
+[target.'cfg(windows)'.dependencies]
+openblas-src = { version = "0.10.16", features = ["vcpkg"] }
+
+[target.'cfg(not(windows))'.dependencies]
+openblas-src = { version = "0.10.16" }
