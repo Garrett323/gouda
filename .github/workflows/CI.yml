@@ -126,6 +126,7 @@ jobs:
         run: |
           $env:VCPKG_ROOT="C:\vcpkg"
           vcpkg install openblas:${{ matrix.platform.vcpkg_triplet }}
+          vcpkg install lapack
           # Expose the install root so the openblas-src / blas-sys build scripts
           # can locate headers and libs without pkg-config.
           "OPENBLAS_PATH=C:\vcpkg\installed\${{ matrix.platform.vcpkg_triplet }}" |
