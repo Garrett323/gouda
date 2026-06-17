@@ -16,7 +16,7 @@ pyo3 = { version = "0.28", features = ["extension-module"] }
 rand = "0.10.1"
 rayon = "1.12.0"
 threadpool = "1.8.1"
-openblas-src = "0.10.16"
+openblas-src = { version = "0.10.16", features = ["system"] }
 
 [dependencies.openssl-sys]
 version = "0.9"
