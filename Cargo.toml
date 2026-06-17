@@ -11,8 +11,8 @@ crate-type = ["cdylib"]
 [dependencies]
 ndarray = { version = "0.17.2", features = ["rayon"] }
 ndarray-linalg = { version = "0.18.1", features = ["openblas"] }
-numpy = "0.28.0"
-pyo3 = { version = "0.28", features = ["extension-module"] }
+numpy = "0.29.0"
+pyo3 = { version = "0.29", features = ["extension-module"] }
 rand = "0.10.1"
 rayon = "1.12.0"
 threadpool = "1.8.1"
