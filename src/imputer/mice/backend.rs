@@ -312,27 +312,25 @@ mod test {
         const DIM: usize = 5;
         const N_POINTS: usize = 4;
         const POINTS: &[f64] = &[1.0; DIM * N_POINTS];
-        const TOTAL: f64 = ((DIM - 1).pow(2) + (DIM - 1)) as f64 / 2.0;
-        const EXPECTED: &[f64] = &[TOTAL; N_POINTS];
+        const N_CLASSES: usize = 3;
 
         let mut model = LogisticRegression::new();
         let mut rng = rand::rng();
         model.coefficients = Some(
             Array2::from_shape_vec(
-                [DIM + 1, 3],
-                (0..3 * (DIM + 1)).map(|_| rng.random()).collect(),
+                [N_CLASSES, DIM + 1],
+                (0..N_CLASSES * (DIM + 1)).map(|_| rng.random()).collect(),
             )
             .expect("Failed to create coefficients"),
         );
 
         let estimates = model
             .predict(&Array2::from_shape_vec((4, 5), POINTS.to_vec()).expect("Predict failed"));
-        assert!(EXPECTED.len() == estimates.len());
+        assert!(N_POINTS == estimates.len());
         for &p in &estimates {
             assert!(
                 &[0, 1, 2].contains(&(p as i32)),
-                "expected: {:?} actual: {:?}",
-                EXPECTED,
+                "expected: [0,1,2] actual: {:?}",
                 &estimates
             );
         }
@@ -380,7 +378,10 @@ mod test {
         let mut model = LogisticRegression::new();
         model.fit(&x, &y);
         // let estimate = model.predict(&x);
-        assert!(model.coefficients.map_or(false, |_| true));
+        assert!(model.coefficients.as_ref().map_or(false, |_| true));
+        let coef = model.coefficients.as_ref().unwrap();
+        println!("{:?}", coef.shape());
+        assert!(coef.shape() == [2, 6]);
     }
 
     #[test]
