@@ -13,7 +13,7 @@ pub enum OUT {
 #[derive(Debug)]
 pub struct EncodingInfo {
     pub string_column_indices: Vec<usize>,
-    pub label_maps: HashMap<usize, HashMap<String, Option<u64>>>,
+    pub _label_maps: HashMap<usize, HashMap<String, Option<u64>>>,
     pub reverse_maps: HashMap<usize, HashMap<u64, String>>,
 }
 
@@ -50,7 +50,6 @@ fn label_encode(values: &[String]) -> (Vec<f64>, HashMap<String, Option<u64>>) {
 }
 
 pub fn pyany_to_vec(
-    py: Python<'_>,
     obj: &Bound<'_, PyAny>,
     string_encoding: &Option<StringEncoding>,
 ) -> PyResult<(Array2<f64>, OUT, Option<EncodingInfo>)> {
@@ -155,7 +154,7 @@ fn encode_object_array(
         Array2::from_shape_vec([nrows, ncols], data).expect("couldn't convert to ndarray"),
         EncodingInfo {
             string_column_indices,
-            label_maps,
+            _label_maps: label_maps,
             reverse_maps,
         },
     )

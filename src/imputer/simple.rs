@@ -1,6 +1,5 @@
 use crate::utils::{StringEncoding, arr_to_out, constants::NOT_FITTED_ERR, pyany_to_vec};
 use ndarray::{Array2, ArrayView2};
-use numpy::{IntoPyArray, PyArray2};
 use pyo3::prelude::*;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::collections::HashMap;
@@ -32,7 +31,7 @@ impl SimpleImputer {
     pub fn fit(slf: Py<Self>, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
         {
             let mut inner = slf.borrow_mut(py);
-            let (arr, _out, _enc) = pyany_to_vec(py, data, &inner.string_encoding)?;
+            let (arr, _out, _enc) = pyany_to_vec(data, &inner.string_encoding)?;
             let ids = if let Some(enc) = _enc {
                 Some(enc.string_column_indices)
             } else {
@@ -56,7 +55,7 @@ impl SimpleImputer {
                 NOT_FITTED_ERR
             )));
         }
-        let (arr, out, enc) = pyany_to_vec(py, data, &self.string_encoding)?;
+        let (arr, out, enc) = pyany_to_vec(data, &self.string_encoding)?;
         let imputed = self.impute(&arr);
         // return python object
         arr_to_out(py, &imputed, out, enc)

@@ -1,7 +1,7 @@
 use crate::utils::{
-    self,
+    self, StringEncoding,
     constants::{ENCODING_WARN, NOT_FITTED_ERR},
-    pyany_to_vec, StringEncoding,
+    pyany_to_vec,
 };
 use ndarray::Array2;
 use pyo3::prelude::*;
@@ -66,7 +66,7 @@ impl ConstantImputer {
                 NOT_FITTED_ERR
             )));
         }
-        let (arr, out, enc) = pyany_to_vec(py, data, &self.string_encoding)?;
+        let (arr, out, enc) = pyany_to_vec(data, &self.string_encoding)?;
         let imputed = self.impute(&arr);
         // return python object
         utils::arr_to_out(py, &imputed, out, enc)

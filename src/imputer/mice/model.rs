@@ -1,6 +1,6 @@
 use super::backend::{LinearRegression, LogisticRegression, PMM, Ridge, Solver};
 use crate::imputer::SimpleImputer;
-use crate::utils::{self, SendPtr, StringEncoding, constants::ENCODING_WARN};
+use crate::utils::{self, SendPtr, StringEncoding};
 use ndarray::{Array1, Array2, Axis};
 use pyo3::prelude::*;
 use rayon::prelude::*;
@@ -52,7 +52,7 @@ impl Mice {
     pub fn fit(slf: Py<Self>, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
         {
             let mut inner = slf.borrow_mut(py);
-            let (arr, _out, enc) = utils::pyany_to_vec(py, data, &inner.string_encoding)?;
+            let (arr, _out, enc) = utils::pyany_to_vec(data, &inner.string_encoding)?;
             if let Some(_) = inner.string_encoding {
                 inner.cat_columns = Some(enc.unwrap().string_column_indices);
             } else {
@@ -75,7 +75,7 @@ impl Mice {
                 "Imputer is not fitted",
             )));
         }
-        let (arr, out, enc) = utils::pyany_to_vec(py, data, &self.string_encoding)?;
+        let (arr, out, enc) = utils::pyany_to_vec(data, &self.string_encoding)?;
         let imputed = self.impute(&arr);
         // return python object
         utils::arr_to_out(py, &imputed, out, enc)

@@ -73,7 +73,7 @@ impl MissForest {
                     1,
                 )?;
             };
-            let (arr, _out, _enc) = pyany_to_vec(py, data, &inner.string_encoding)?;
+            let (arr, _out, _enc) = pyany_to_vec(data, &inner.string_encoding)?;
             inner.fit_impl(&arr);
             inner.is_fitted = true;
         } // dropping inner here (releasing the mutex)
@@ -92,7 +92,7 @@ impl MissForest {
                 NOT_FITTED_ERR
             )));
         }
-        let (arr, out, _enc) = pyany_to_vec(py, data, &self.string_encoding)?;
+        let (arr, out, _enc) = pyany_to_vec(data, &self.string_encoding)?;
         let imputed = self.impute(&arr);
         // return python object
         arr_to_out(py, &imputed, out, _enc)

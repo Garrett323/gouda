@@ -75,7 +75,7 @@ impl KnnImputer {
                     1,
                 )?;
             };
-            let (arr, _out, _enc) = utils::pyany_to_vec(py, data, &inner.string_encoding)?;
+            let (arr, _out, _enc) = utils::pyany_to_vec(data, &inner.string_encoding)?;
             if let Metrics::Gower(_) = inner.metric {
                 inner.metric = Metrics::Gower(Some(inner.span(arr.view())));
                 let indices = _enc
@@ -105,7 +105,7 @@ impl KnnImputer {
                 "Imputer is not fitted",
             )));
         }
-        let (arr, out, enc) = utils::pyany_to_vec(py, data, &self.string_encoding)?;
+        let (arr, out, enc) = utils::pyany_to_vec(data, &self.string_encoding)?;
         // actual method
         let dist = match self.metric {
             Metrics::NanEuclid => Self::nan_euclid,
