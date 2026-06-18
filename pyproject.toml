@@ -28,4 +28,5 @@ dev = [
     "pandas-stubs>=2.3.3.260113",
     "tqdm>=4.67.3",
     "maturin[patchelf]>=1.13.3",
+    "hyperimpute>=0.1.17",
 ]

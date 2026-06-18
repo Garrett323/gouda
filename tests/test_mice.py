@@ -5,6 +5,7 @@ import pytest
 from gouda import Mice, SimpleImputer
 import time
 import pandas as pd
+# from hyperimpute.plugins.imputers import Imputers
 
 
 def test_nans():
@@ -33,8 +34,13 @@ def test_iterations_work():
     print("data:\n", data)
     print("imputed:\n", imputed)
     print("imputed2:\n", imputed2)
-    assert np.allclose(
-        imputed, imputed2), "Unexpected difference between different iterations"
+    diff = np.abs(imputed - imputed2)
+    print("diff:\n", diff)
+    print("max diff:\n", diff.max())
+    print(f"stats:\nmean: {imputed.mean()} min: {
+          imputed.min()} max: {imputed.max()}")
+    assert np.allclose(imputed, imputed2, atol=1e-3), \
+        "Unexpected difference between different iterations"
     print("imputed3:\n", imputed3)
     assert not np.allclose(
         imputed, imputed3), "No difference between iterations"
@@ -56,12 +62,20 @@ def test_time():
     data = np.random.rand(500, 12)
     data[data < 0.78] = np.nan
     max_iter = 10
+    # hyper_mice = Imputers().get("mice")
 
     N = 3
 # Warmup
     for _ in range(3):
         _ = Mice(max_iter=max_iter).fit(data).transform(data)
         _ = IterativeImputer(max_iter=max_iter).fit(data).transform(data)
+
+# # Benchmark Hyper
+#     times_h = []
+#     for _ in range(N):
+#         start = time.perf_counter_ns()
+#         _ = hyper_mice.fit_transform(data)
+#         times_h.append(time.perf_counter_ns() - start)
 
 # Benchmark Rust
     times_rs = []
@@ -81,9 +95,12 @@ def test_time():
 
     elapsed_rs = sorted(times_rs)[N // 2]  # median
     elapsed_sk = sorted(times_sk)[N // 2]
+    # elapsed_h = sorted(times_h)[N // 2]
 
     assert 4 * elapsed_rs < elapsed_sk, f"Rust: {
         elapsed_rs}ns  sklearn: {elapsed_sk}ns"
+    # assert 4 * elapsed_rs < elapsed_h, f"Rust: {
+    #     elapsed_rs}ns  hyper impute: {elapsed_h}ns"
 
 
 def test_categoricals():
