@@ -112,10 +112,10 @@ jobs:
           #   target: x86
           #   python_arch: x86
           #   vcpkg_triplet: x86-windows-static-md
-          - runner: windows-11-arm
-            target: aarch64
-            python_arch: arm64
-            vcpkg_triplet: arm64-windows-static-md
+          # - runner: windows-11-arm
+          #   target: aarch64
+          #   python_arch: arm64
+          #   vcpkg_triplet: arm64-windows-static-md
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
