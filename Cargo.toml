@@ -15,7 +15,6 @@ pyo3 = { version = "0.29", features = ["extension-module"] }
 rand = "0.10.1"
 rayon = "1.12.0"
 threadpool = "1.8.1"
-openblas-src = "0.10.16"
 
 [dependencies.openssl-sys]
 version = "0.9"
@@ -25,4 +24,5 @@ features = ["vendored"]
 ndarray-linalg = { version = "0.18.1", features = ["intel-mkl"] }
 
 [target.'cfg(not(windows))'.dependencies]
+openblas-src = "0.10.16"
 ndarray-linalg = { version = "0.18.1", features = ["openblas"] }
