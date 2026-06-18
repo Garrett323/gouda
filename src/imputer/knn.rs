@@ -1,6 +1,5 @@
-use crate::utils::{self, SendPtr, StringEncoding, constants::ENCODING_WARN};
-
-use ndarray::Array2;
+use crate::utils::{self, SendPtr, StringEncoding};
+use ndarray::{Array2, ArrayView1, ArrayView2};
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use rayon::prelude::*;
@@ -13,6 +12,7 @@ enum Weights {
 enum Metrics {
     NanEuclid,
     ExpectedDistance,
+    Gower(Option<Vec<f64>>),
 }
 
 #[pyclass]
@@ -21,13 +21,15 @@ pub struct KnnImputer {
     k: usize,
     data: Option<Array2<f64>>,
     string_encoding: Option<StringEncoding>,
+    cat_cols: Option<Vec<usize>>,
+    num_cols: Option<Vec<usize>>,
     is_fitted: bool,
     metric: Metrics,
     weights: Weights,
 }
 
 const ALLOWED_WEIGHTS: [&str; 2] = ["uniform", "distance"];
-const ALLOWED_METRICS: [&str; 2] = ["nan_euclid", "expected_distance"];
+const ALLOWED_METRICS: &[&str] = &["nan_euclid", "expected_distance", "gower"];
 
 #[pymethods]
 impl KnnImputer {
@@ -43,6 +45,7 @@ impl KnnImputer {
             metric: match metric {
                 "nan_euclid" => Metrics::NanEuclid,
                 "expected_distance" => Metrics::ExpectedDistance,
+                "gower" => Metrics::Gower(None),
                 _ => panic!("metric parameter not supported, {:?}", ALLOWED_METRICS),
             },
             weights: match weights {
@@ -50,6 +53,8 @@ impl KnnImputer {
                 "distance" => Weights::Distance,
                 _ => panic!("weight parameter not supported, {:?}", ALLOWED_WEIGHTS),
             },
+            cat_cols: None,
+            num_cols: None,
             string_encoding: match encoding {
                 None => None,
                 Some(_) => Some(StringEncoding::LabelEncoding),
@@ -60,17 +65,30 @@ impl KnnImputer {
     pub fn fit(slf: Py<Self>, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
         {
             let mut inner = slf.borrow_mut(py);
-            if let Some(_) = inner.string_encoding {
+            if let (Some(_), Metrics::ExpectedDistance | Metrics::NanEuclid) =
+                (&inner.string_encoding, &inner.metric)
+            {
                 pyo3::PyErr::warn(
                     py,
                     &py.get_type::<pyo3::exceptions::PyUserWarning>(),
-                    ENCODING_WARN,
+                    c"Passed Label encoding but didn't select a metric that supports categoricals! Please pass one of the metrics that support categoricals [gower]",
                     1,
                 )?;
             };
-            let ((vec, nrows, ncols), _out, _enc) =
-                utils::pyany_to_vec(py, data, &inner.string_encoding)?;
-            inner.data = Some(Array2::from_shape_vec((nrows, ncols), vec).unwrap());
+            let (arr, _out, _enc) = utils::pyany_to_vec(data, &inner.string_encoding)?;
+            if let Metrics::Gower(_) = inner.metric {
+                inner.metric = Metrics::Gower(Some(inner.span(arr.view())));
+                let indices = _enc
+                    .expect("Passed gower but didnt pass encoding strategy")
+                    .string_column_indices;
+                inner.num_cols = Some(
+                    (0..arr.ncols())
+                        .filter(|idx| !indices.contains(idx))
+                        .collect(),
+                );
+                inner.cat_cols = Some(indices);
+            }
+            inner.data = Some(arr);
             inner.is_fitted = true;
         } // dropping inner here (releasing the mutex)
         Ok(slf)
@@ -87,47 +105,44 @@ impl KnnImputer {
                 "Imputer is not fitted",
             )));
         }
-        let ((data, nrows, ncols), out, enc) =
-            utils::pyany_to_vec(py, data, &self.string_encoding)?;
+        let (arr, out, enc) = utils::pyany_to_vec(data, &self.string_encoding)?;
         // actual method
         let dist = match self.metric {
             Metrics::NanEuclid => Self::nan_euclid,
             Metrics::ExpectedDistance => Self::expected_distance,
+            Metrics::Gower(_) => Self::gower,
         };
-        let imputed = self.brute_force(&data, nrows, dist);
+        let imputed = self.brute_force(arr.view(), dist);
         // return python object
-        let array = ndarray::Array2::from_shape_vec((nrows, ncols), imputed)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-        utils::arr_to_out(py, &array, out, enc)
+        utils::arr_to_out(py, &imputed, out, enc)
     }
 }
 
 impl KnnImputer {
     fn brute_force(
         &self,
-        data: &[f64],
-        nrows: usize,
-        dist: fn(&KnnImputer, &[f64], &[f64]) -> f64,
-    ) -> Vec<f64> {
-        let mut imputed = data.to_vec();
+        data: ArrayView2<f64>,
+        dist: fn(&KnnImputer, ArrayView1<f64>, ArrayView1<f64>) -> f64,
+    ) -> Array2<f64> {
+        let mut imputed = data.to_owned();
         let imp_ptr = std::sync::Arc::new(SendPtr(imputed.as_mut_ptr()));
         let base = self.data.as_ref().unwrap();
-        (0..nrows).into_par_iter().for_each(|row| {
+        (0..data.nrows()).into_par_iter().for_each(|row| {
             let cols: Vec<usize> = (0..base.ncols())
-                .filter(|j| data[row * base.ncols() + j].is_nan())
+                .filter(|&j| data[(row, j)].is_nan())
                 .collect();
-            let p = &data[row * base.ncols()..row * base.ncols() + base.ncols()]; //base.row(row);
-            let distances: Vec<f64> = (0..nrows)
+            let p = data.row(row);
+            let distances: Vec<f64> = (0..data.nrows())
                 .into_par_iter()
                 .map(|r| {
                     if r == row {
                         f64::MAX
                     } else {
-                        dist(&self, p, &base.row(r).as_slice().unwrap())
+                        dist(&self, p, base.row(r))
                     }
                 })
                 .collect();
-            let mut indices: Vec<_> = (0..nrows).collect();
+            let mut indices: Vec<_> = (0..data.nrows()).collect();
             indices.par_sort_unstable_by(|&a, &b| distances[a].total_cmp(&distances[b]));
             let avgs = self.average(&indices, &cols, &self.get_weights(&distances));
             let ptr = std::sync::Arc::clone(&imp_ptr);
@@ -164,8 +179,6 @@ impl KnnImputer {
         } else {
             cols.iter().map(avg).collect()
         }
-        // for (j, c) in cols.iter().enumerate() {}
-        // avg
     }
 
     fn get_weights(&self, distances: &[f64]) -> Vec<f64> {
@@ -173,6 +186,25 @@ impl KnnImputer {
             Weights::Uniform => distances.iter().map(|_| 1.0 / self.k as f64).collect(),
             Weights::Distance => distances.iter().map(|d| 1.0 / d).collect(),
         }
+    }
+
+    fn span(&self, arr: ArrayView2<f64>) -> Vec<f64> {
+        (0..arr.ncols())
+            .into_par_iter()
+            .map(|i| {
+                let mut max = f64::NEG_INFINITY;
+                let mut min = f64::INFINITY;
+                arr.column(i).for_each(|&v| {
+                    if v > max {
+                        max = v
+                    }
+                    if v < min {
+                        min = v
+                    }
+                });
+                max - min
+            })
+            .collect()
     }
 
     fn sanity_check(metric: &str, weights: &str) {
@@ -193,7 +225,7 @@ impl KnnImputer {
 
 // Distance Functions
 impl KnnImputer {
-    fn nan_euclid(&self, a: &[f64], b: &[f64]) -> f64 {
+    fn nan_euclid(&self, a: ArrayView1<f64>, b: ArrayView1<f64>) -> f64 {
         let mut total = 0.0;
         let mut valid = 0;
         let ncols = a.len();
@@ -211,7 +243,7 @@ impl KnnImputer {
         total * (ncols as f64 / valid as f64)
     }
 
-    fn expected_distance(&self, a: &[f64], b: &[f64]) -> f64 {
+    fn expected_distance(&self, a: ArrayView1<f64>, b: ArrayView1<f64>) -> f64 {
         let mut total = 0.0;
         let mut total_obs = 0.0;
         let ncols = a.len();
@@ -229,11 +261,55 @@ impl KnnImputer {
         }
         total + total_obs.sqrt()
     }
+
+    fn gower(&self, a: ArrayView1<f64>, b: ArrayView1<f64>) -> f64 {
+        let ranges = if let Metrics::Gower(v) = &self.metric {
+            v.as_ref().unwrap().as_slice()
+        } else {
+            panic!("Set distance to gower when calling gower!");
+        };
+        let mut total = 0.0;
+        let mut valid = 0;
+        for &i in self.cat_cols.as_ref().unwrap() {
+            if !(a[i].is_nan() || b[i].is_nan()) {
+                total += (a[i] - b[i]).min(1.0);
+                valid += 1;
+            }
+        }
+        for &i in self.num_cols.as_ref().unwrap() {
+            let (x, y) = (a[i] / ranges[i], b[i] / ranges[i]);
+            if !(x.is_nan() || y.is_nan()) {
+                let d = x - y;
+                total += d * d;
+                valid += 1;
+            }
+        }
+        if valid == 0 { f64::INFINITY } else { total }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use ndarray::Array1;
+
     use super::*; // has access to everything, including private
+
+    #[test]
+    fn gower() {
+        // gower is same as nan_euclid for numeric only
+        let knn = KnnImputer::new(5, "gower", "uniform", Some("label"));
+        let p = &[f64::NAN, 0.22129885, 0.8863533, 0.50595314, 0.5011135];
+
+        for (e, q) in EXPECTED_EUCLID.iter().zip(POINTS_EUCLID) {
+            let result = knn.nan_euclid(p.into(), q.into()).sqrt();
+            assert!(
+                (result - e).abs() < 1e-7,
+                "Expected: {}; Actual: {}",
+                e,
+                result
+            );
+        }
+    }
 
     #[test]
     fn nan_euclid() {
@@ -241,7 +317,7 @@ mod tests {
         let p = &[f64::NAN, 0.22129885, 0.8863533, 0.50595314, 0.5011135];
 
         for (e, q) in EXPECTED_EUCLID.iter().zip(POINTS_EUCLID) {
-            let result = knn.nan_euclid(p, q).sqrt();
+            let result = knn.nan_euclid(p.into(), q.into()).sqrt();
             assert!(
                 (result - e).abs() < 1e-7,
                 "Expected: {}; Actual: {}",
@@ -275,7 +351,10 @@ mod tests {
         ];
         let knn = KnnImputer::new(5, "expected_distance", "uniform", None);
         for (e, q) in expected.iter().zip(points) {
-            let result = knn.expected_distance(p, q);
+            let result = knn.expected_distance(
+                Array1::from_vec(p.to_vec()).view(),
+                Array1::from_vec(q.to_vec()).view(),
+            );
             assert!(
                 (result - e).abs() < 1e-9,
                 "Expected: {}; Actual: {}",
@@ -289,14 +368,31 @@ mod tests {
     fn compare() {
         let knn = KnnImputer::new(5, "nan_euclid", "uniform", None);
         let (a, b) = (&[1.0, 2.0], &[3.0, 4.0]);
-        let diff = knn.nan_euclid(a, b).sqrt() - knn.expected_distance(a, b);
+        let diff = knn
+            .nan_euclid(
+                Array1::from_vec(a.to_vec()).view(),
+                Array1::from_vec(b.to_vec()).view(),
+            )
+            .sqrt()
+            - knn.expected_distance(
+                Array1::from_vec(a.to_vec()).view(),
+                Array1::from_vec(b.to_vec()).view(),
+            );
         assert!((diff).abs() < 1e-10, "Expected: 0.0; Actual {}", diff);
 
         let (a, b) = (&[1.0, f64::NAN], &[3.0, f64::NAN]);
         // 2.8284271247461903
-        let euclid = knn.nan_euclid(a, b).sqrt();
+        let euclid = knn
+            .nan_euclid(
+                Array1::from_vec(a.to_vec()).view(),
+                Array1::from_vec(b.to_vec()).view(),
+            )
+            .sqrt();
         // 2 + 1/3
-        let ed = knn.expected_distance(a, b);
+        let ed = knn.expected_distance(
+            Array1::from_vec(a.to_vec()).view(),
+            Array1::from_vec(b.to_vec()).view(),
+        );
         let diff = euclid - ed;
         assert!(
             (diff - 0.4954271247461901).abs() < 1e-10,

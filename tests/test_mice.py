@@ -4,6 +4,7 @@ from sklearn.impute import IterativeImputer
 import pytest
 from gouda import Mice, SimpleImputer
 import time
+import pandas as pd
 
 
 def test_nans():
@@ -31,6 +32,7 @@ def test_iterations_work():
     imputed3 = Mice(backend="linear", max_iter=4).fit(data).transform(data)
     print("data:\n", data)
     print("imputed:\n", imputed)
+    print("imputed2:\n", imputed2)
     assert np.allclose(
         imputed, imputed2), "Unexpected difference between different iterations"
     print("imputed3:\n", imputed3)
@@ -82,3 +84,18 @@ def test_time():
 
     assert 4 * elapsed_rs < elapsed_sk, f"Rust: {
         elapsed_rs}ns  sklearn: {elapsed_sk}ns"
+
+
+def test_categoricals():
+    data = pd.DataFrame({
+        "a": np.random.rand(200),
+        "b": ["a" for _ in range(150)] + ["b" for _ in range(50)]
+    })
+    mask = np.random.rand(200, 2) > 0.5
+    data[mask] = pd.NA
+    imputed = Mice(max_iter=2, encoding='label').fit(data).transform(data)
+    print("data", data.iloc[:20])
+    print("imputed", imputed[:20])
+    assert isinstance(imputed, pd.DataFrame), "No DataFrame returned"
+    for l in imputed.iloc[mask[:, 1], 1]:
+        assert l == "a"

@@ -1,4 +1,5 @@
-use ndarray::{Array1, Array2, Axis};
+use crate::utils::SendPtr;
+use ndarray::{Array1, Array2, ArrayView1, Axis};
 use ndarray_linalg::{LeastSquaresSvd, SVD};
 
 use rand::prelude::*;
@@ -7,7 +8,7 @@ use std::sync::Mutex;
 
 pub trait Solver: Send + Sync {
     fn bias(&self) -> bool;
-    fn coefficients(&self) -> &Option<Array1<f64>>;
+    fn coefficients(&self) -> Option<ArrayView1<'_, f64>>;
     fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>);
     fn predict(&self, points: &Array2<f64>) -> Array1<f64> {
         let points = if self.bias() {
@@ -15,11 +16,8 @@ pub trait Solver: Send + Sync {
         } else {
             points
         };
-        let weights = self
-            .coefficients()
-            .as_ref()
-            .expect("Unable to find weights!");
-        points.dot(weights)
+        let weights = self.coefficients().expect("Unable to find weights!");
+        points.dot(&weights)
     }
     fn clone(&self) -> Box<dyn Solver>;
 }
@@ -33,6 +31,12 @@ pub struct PMM {
 
 pub struct LinearRegression {
     coefficients: Option<Array1<f64>>,
+    bias: bool,
+}
+
+pub struct LogisticRegression {
+    coefficients: Option<Array2<f64>>,
+    n_classes: usize,
     bias: bool,
 }
 
@@ -76,8 +80,8 @@ impl Solver for LinearRegression {
     fn bias(&self) -> bool {
         self.bias
     }
-    fn coefficients(&self) -> &Option<Array1<f64>> {
-        &self.coefficients
+    fn coefficients(&self) -> Option<ArrayView1<'_, f64>> {
+        Some(self.coefficients.as_ref().unwrap().view())
     }
 
     fn clone(&self) -> Box<dyn Solver> {
@@ -114,8 +118,8 @@ impl Solver for Ridge {
     fn bias(&self) -> bool {
         self.bias
     }
-    fn coefficients(&self) -> &Option<Array1<f64>> {
-        &self.coefficients
+    fn coefficients(&self) -> Option<ArrayView1<'_, f64>> {
+        Some(self.coefficients.as_ref().unwrap().view())
     }
 
     fn clone(&self) -> Box<dyn Solver> {
@@ -124,6 +128,84 @@ impl Solver for Ridge {
             bias: self.bias.clone(),
             alpha: self.alpha.clone(),
         })
+    }
+}
+
+impl LogisticRegression {
+    pub fn new() -> Self {
+        LogisticRegression {
+            coefficients: None,
+            n_classes: 0,
+            bias: true,
+        }
+    }
+}
+
+use std::collections::HashSet;
+
+impl Solver for LogisticRegression {
+    fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>) {
+        let target: Vec<u64> = target.par_iter().map(|&x| x as u64).collect();
+        self.n_classes = target
+            .iter()
+            .map(|&x| x as u64)
+            .collect::<HashSet<_>>()
+            .len();
+        let mut weights = Array2::<f64>::zeros((self.n_classes, data.ncols()));
+        let weight_ptr = std::sync::Arc::new(SendPtr(weights.as_mut_ptr()));
+        let data = if self.bias {
+            &add_bias_column(data)
+        } else {
+            data
+        };
+        (0..self.n_classes).into_par_iter().for_each(|i| {
+            let ptr = std::sync::Arc::clone(&weight_ptr);
+            let target: Array1<f64> = target
+                .iter()
+                .map(|&v| if v == i as u64 { 1.0 } else { 0.0 })
+                .collect();
+            let coef = data
+                .least_squares(&target)
+                .expect("No least squares solution possible")
+                .solution;
+            for (j, &c) in coef.iter().enumerate() {
+                unsafe {
+                    *ptr.0.add(i * weights.ncols() + j) = c;
+                }
+            }
+        });
+        self.coefficients = Some(weights);
+    }
+    fn bias(&self) -> bool {
+        self.bias
+    }
+    fn coefficients(&self) -> Option<ArrayView1<'_, f64>> {
+        self.coefficients.as_ref().map(|c| c.row(0))
+        // Some(self.coefficients.as_ref().unwrap().row(0))
+    }
+
+    fn clone(&self) -> Box<dyn Solver> {
+        Box::new(LogisticRegression {
+            coefficients: self.coefficients.clone(),
+            n_classes: self.n_classes,
+            bias: self.bias.clone(),
+        })
+    }
+
+    fn predict(&self, points: &Array2<f64>) -> Array1<f64> {
+        let points = if self.bias() {
+            &add_bias_column(points)
+        } else {
+            points
+        };
+        let probabilites = points.dot(self.coefficients.as_ref().expect("Call fit first!"));
+        let predictions: Array1<f64> = Array1::from(
+            (0..probabilites.nrows())
+                .into_par_iter()
+                .map(|i| argmax(probabilites.row(i).as_slice().unwrap()).0 as f64)
+                .collect::<Vec<_>>(),
+        );
+        predictions
     }
 }
 
@@ -164,7 +246,7 @@ impl Solver for PMM {
     fn bias(&self) -> bool {
         self.model.bias()
     }
-    fn coefficients(&self) -> &Option<Array1<f64>> {
+    fn coefficients(&self) -> Option<ArrayView1<'_, f64>> {
         self.model.coefficients()
     }
     fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>) {
@@ -226,6 +308,37 @@ mod test {
     use super::*; // has access to everything, including private
 
     #[test]
+    fn log_reg_estimate() {
+        const DIM: usize = 5;
+        const N_POINTS: usize = 4;
+        const POINTS: &[f64] = &[1.0; DIM * N_POINTS];
+        const TOTAL: f64 = ((DIM - 1).pow(2) + (DIM - 1)) as f64 / 2.0;
+        const EXPECTED: &[f64] = &[TOTAL; N_POINTS];
+
+        let mut model = LogisticRegression::new();
+        let mut rng = rand::rng();
+        model.coefficients = Some(
+            Array2::from_shape_vec(
+                [DIM + 1, 3],
+                (0..3 * (DIM + 1)).map(|_| rng.random()).collect(),
+            )
+            .expect("Failed to create coefficients"),
+        );
+
+        let estimates = model
+            .predict(&Array2::from_shape_vec((4, 5), POINTS.to_vec()).expect("Predict failed"));
+        assert!(EXPECTED.len() == estimates.len());
+        for &p in &estimates {
+            assert!(
+                &[0, 1, 2].contains(&(p as i32)),
+                "expected: {:?} actual: {:?}",
+                EXPECTED,
+                &estimates
+            );
+        }
+    }
+
+    #[test]
     fn estimate() {
         const DIM: usize = 5;
         const N_POINTS: usize = 4;
@@ -254,6 +367,20 @@ mod test {
                 &estimates
             );
         }
+    }
+
+    #[test]
+    fn log_reg() {
+        let x = Array2::from_shape_vec((20, 5), DATA.to_owned()).unwrap();
+        let y: Array1<f64> = (0..20)
+            .into_iter()
+            .map(|i| if i < 10 { 1.0 } else { 0.0 })
+            .collect();
+
+        let mut model = LogisticRegression::new();
+        model.fit(&x, &y);
+        // let estimate = model.predict(&x);
+        assert!(model.coefficients.map_or(false, |_| true));
     }
 
     #[test]

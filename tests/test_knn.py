@@ -3,6 +3,7 @@ import time
 from sklearn.impute import KNNImputer as SKKNN
 from gouda import KnnImputer as RSKNN
 import pytest
+import pandas as pd
 
 
 @pytest.mark.heavy
@@ -71,3 +72,22 @@ def test_ed():
     imputed_rs = RSKNN(metric="expected_distance").fit(data).transform(data)
     imputed_sk = SKKNN().fit(data).transform(data)
     assert not np.isclose(imputed_rs, imputed_sk).all(), "wrong distances"
+
+
+
+def test_categoricals():
+    data = pd.DataFrame({
+        "a": np.random.rand(200),
+        "b": ["a" for _ in range(150)] + ["b" for _ in range(50)]
+    })
+    mask = np.random.rand(200, 2) > 0.5
+    data[mask] = pd.NA
+    imputed = RSKNN(metric="gower", encoding= 'label').fit(data).transform(data)
+    print("data", data.iloc[:20])
+    print("imputed", imputed[:20])
+    assert isinstance(imputed, pd.DataFrame), "No DataFrame returned"
+    for l in imputed.iloc[mask[:, 1], 1]:
+        assert l == "a"
+
+
+
