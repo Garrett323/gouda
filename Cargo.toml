@@ -14,7 +14,6 @@ numpy = "0.29.0"
 pyo3 = { version = "0.29", features = ["extension-module"] }
 rand = "0.10.1"
 rayon = "1.12.0"
-threadpool = "1.8.1"
 
 [dependencies.openssl-sys]
 version = "0.9"
