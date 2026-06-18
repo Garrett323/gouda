@@ -10,7 +10,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 ndarray = { version = "0.17.2", features = ["rayon"] }
-ndarray-linalg = { version = "0.18.1", features = ["openblas-static"] }
 numpy = "0.29.0"
 pyo3 = { version = "0.29", features = ["extension-module"] }
 rand = "0.10.1"
@@ -23,7 +22,7 @@ version = "0.9"
 features = ["vendored"]
 
 [target.'cfg(windows)'.dependencies]
-openblas-src = { version = "0.10.16", features = ["system"] }
+ndarray-linalg = { version = "0.18.1", features = ["intel-mkl"] }
 
 [target.'cfg(not(windows))'.dependencies]
-openblas-src = { version = "0.10.16" }
+ndarray-linalg = { version = "0.18.1", features = ["openblas"] }
