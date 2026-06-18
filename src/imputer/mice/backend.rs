@@ -151,13 +151,13 @@ impl Solver for LogisticRegression {
             .map(|&x| x as u64)
             .collect::<HashSet<_>>()
             .len();
-        let mut weights = Array2::<f64>::zeros((self.n_classes, data.ncols()));
-        let weight_ptr = std::sync::Arc::new(SendPtr(weights.as_mut_ptr()));
         let data = if self.bias {
             &add_bias_column(data)
         } else {
             data
         };
+        let mut weights = Array2::<f64>::zeros((self.n_classes, data.ncols()));
+        let weight_ptr = std::sync::Arc::new(SendPtr(weights.as_mut_ptr()));
         (0..self.n_classes).into_par_iter().for_each(|i| {
             let ptr = std::sync::Arc::clone(&weight_ptr);
             let target: Array1<f64> = target
@@ -198,7 +198,7 @@ impl Solver for LogisticRegression {
         } else {
             points
         };
-        let probabilites = points.dot(self.coefficients.as_ref().expect("Call fit first!"));
+        let probabilites = points.dot(&self.coefficients.as_ref().expect("Call fit first!").t());
         let predictions: Array1<f64> = Array1::from(
             (0..probabilites.nrows())
                 .into_par_iter()

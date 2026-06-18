@@ -114,5 +114,14 @@ def test_categoricals():
     print("data", data.iloc[:20])
     print("imputed", imputed[:20])
     assert isinstance(imputed, pd.DataFrame), "No DataFrame returned"
-    for l in imputed.iloc[mask[:, 1], 1]:
-        assert l == "a"
+    for val in imputed.iloc[mask[:, 1], 1]:
+        assert val == "a"
+
+
+def test_shape_mismatch():
+    data = pd.read_csv("tests/resources/test.csv")
+    print(data)
+    mask = np.random.rand(*data.shape) > 0.5
+    data[mask] = pd.NA
+    imputed = Mice(max_iter=2, encoding='label').fit(data).transform(data)
+    print(imputed)
