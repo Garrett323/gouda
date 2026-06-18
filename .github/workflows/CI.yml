@@ -122,16 +122,16 @@ jobs:
         with:
           python-version: 3.13
           architecture: ${{ matrix.platform.python_arch }}
-      - name: Install OpenBLAS via vcpkg
-        run: |
-          $env:VCPKG_ROOT="C:\vcpkg"
-          vcpkg install openblas:${{ matrix.platform.vcpkg_triplet }}
-          vcpkg install lapack:${{ matrix.platform.vcpkg_triplet }}
-          # Expose the install root so the openblas-src / blas-sys build scripts
-          # can locate headers and libs without pkg-config.
-          "OPENBLAS_PATH=C:\vcpkg\installed\${{ matrix.platform.vcpkg_triplet }}" |
-            Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-        shell: pwsh
+      # - name: Install OpenBLAS via vcpkg
+      #   run: |
+      #     $env:VCPKG_ROOT="C:\vcpkg"
+      #     vcpkg install openblas:${{ matrix.platform.vcpkg_triplet }}
+      #     vcpkg install lapack:${{ matrix.platform.vcpkg_triplet }}
+      #     # Expose the install root so the openblas-src / blas-sys build scripts
+      #     # can locate headers and libs without pkg-config.
+      #     "OPENBLAS_PATH=C:\vcpkg\installed\${{ matrix.platform.vcpkg_triplet }}" |
+      #       Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      #   shell: pwsh
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
