@@ -37,8 +37,7 @@ def test_iterations_work():
     diff = np.abs(imputed - imputed2)
     print("diff:\n", diff)
     print("max diff:\n", diff.max())
-    print(f"stats:\nmean: {imputed.mean()} min: {
-          imputed.min()} max: {imputed.max()}")
+    print(f"stats:\nmean: {imputed.mean()} min: {imputed.min()} max: {imputed.max()}")
     assert np.allclose(imputed, imputed2, atol=1e-3), \
         "Unexpected difference between different iterations"
     print("imputed3:\n", imputed3)
@@ -97,8 +96,7 @@ def test_time():
     elapsed_sk = sorted(times_sk)[N // 2]
     # elapsed_h = sorted(times_h)[N // 2]
 
-    assert 3.3 * elapsed_rs < elapsed_sk, f"Rust: {
-        elapsed_rs}ns  sklearn: {elapsed_sk}ns"
+    assert 3.3 * elapsed_rs < elapsed_sk, f"Rust: {elapsed_rs}ns  sklearn: {elapsed_sk}ns"
     # assert 4 * elapsed_rs < elapsed_h, f"Rust: {
     #     elapsed_rs}ns  hyper impute: {elapsed_h}ns"
 

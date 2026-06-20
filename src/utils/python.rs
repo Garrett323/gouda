@@ -30,7 +30,7 @@ fn label_encode(values: &[String]) -> (Vec<f64>, HashMap<String, Option<u64>>) {
     let map: HashMap<String, Option<u64>> = unique
         .iter()
         .map(|&s| match s {
-            "nan" | "NaN" => (s.to_owned(), None),
+            "nan" | "NaN" | "<NA>" => (s.to_owned(), None),
             _ => (s.to_owned(), {
                 let e = Some(counter);
                 counter += 1;

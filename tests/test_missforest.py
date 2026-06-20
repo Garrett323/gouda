@@ -57,5 +57,4 @@ def test_time():
     elapsed_rs = sorted(times_rs)[N // 2]  # median
     elapsed_sk = sorted(times_sk)[N // 2]
 
-    assert elapsed_rs < elapsed_sk * 0.8, f"Rust: {
-        elapsed_rs}ns  Python: {elapsed_sk}ns"
+    assert elapsed_rs < elapsed_sk * 0.8, f"Rust: {elapsed_rs}ns  Python: {elapsed_sk}ns"
