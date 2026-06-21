@@ -1,0 +1,30 @@
+name: default
+datasets:
+  - 2
+  - 53
+missing_rates:
+  - 0.1
+  - 0.3
+  - 0.5
+  - 0.7
+model_params: {}
+seeds: 
+  - 42
+  - 179
+  - 88
+missing_mechanism:
+
+---
+name: mice
+model: mice
+missing_mechanism: mcar
+
+---
+name: knn
+model: knn
+missing_mechanism: mcar
+
+---
+name: missforest
+model: missforest
+missing_mechanism: mcar
