@@ -7,12 +7,14 @@ missing_rates:
   - 0.3
   - 0.5
   - 0.7
-model_params: {}
+model_params:
+  encoding: label
 seeds: 
   - 42
   - 179
   - 88
 missing_mechanism:
+no_cat: False
 
 ---
 name: mice
@@ -23,8 +25,24 @@ missing_mechanism: mcar
 name: knn
 model: knn
 missing_mechanism: mcar
+model_params:
+  metric: gower
 
 ---
 name: missforest
 model: missforest
 missing_mechanism: mcar
+
+---
+name: iterative 
+model: iterative
+missing_mechanism: mcar
+model_params: null
+no_cat: True
+
+---
+name: missforest-py
+model: missforest-py
+missing_mechanism: mcar
+model_params: null
+no_cat: True
