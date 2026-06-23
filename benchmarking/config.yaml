@@ -2,10 +2,19 @@ name: default
 datasets:
   - 2
   - 53
+  - 222
+  - 320
+  - 109
+  - 19
+  - 14
+  - 545
 missing_rates:
   - 0.1
+  - 0.2
   - 0.3
+  - 0.4
   - 0.5
+  - 0.6
   - 0.7
 model_params:
   encoding: label
@@ -13,6 +22,7 @@ seeds:
   - 42
   - 179
   - 88
+  - 188
 missing_mechanism:
 no_cat: False
 
@@ -32,6 +42,10 @@ model_params:
 name: missforest
 model: missforest
 missing_mechanism: mcar
+model_params: 
+  - n_trees: 20
+  - max_depth: 20
+  - min_samples_leaf: 3
 
 ---
 name: iterative 
