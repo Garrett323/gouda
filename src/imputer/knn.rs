@@ -116,6 +116,18 @@ impl KnnImputer {
         // return python object
         utils::arr_to_out(py, &imputed, out, enc)
     }
+
+    pub fn fit_transform<'py>(
+        slf: Py<Self>,
+        py: Python<'py>,
+        data: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let slf = Self::fit(slf, py, data)?;
+        {
+            let inner = slf.borrow_mut(py);
+            inner.transform(py, data)
+        }
+    }
 }
 
 impl KnnImputer {
@@ -272,19 +284,22 @@ impl KnnImputer {
         let mut valid = 0;
         for &i in self.cat_cols.as_ref().unwrap() {
             if !(a[i].is_nan() || b[i].is_nan()) {
-                total += (a[i] - b[i]).min(1.0);
+                total += (a[i] - b[i]).abs().min(1.0);
                 valid += 1;
             }
         }
         for &i in self.num_cols.as_ref().unwrap() {
             let (x, y) = (a[i] / ranges[i], b[i] / ranges[i]);
             if !(x.is_nan() || y.is_nan()) {
-                let d = x - y;
-                total += d * d;
+                total += (x - y).abs();
                 valid += 1;
             }
         }
-        if valid == 0 { f64::INFINITY } else { total }
+        if valid == 0 {
+            f64::INFINITY
+        } else {
+            total / valid as f64
+        }
     }
 }
 
