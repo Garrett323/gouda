@@ -31,7 +31,7 @@ dev = [
     "hyperimpute>=0.1.17",
     "pyyaml>=6.0.3",
     "ucimlrepo>=0.0.7",
-    "swiss-cheese==0.1.5",
+    "swiss-cheese==0.1.6",
 ]
 
 [tool.setuptools.packages.find]

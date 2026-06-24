@@ -5,14 +5,15 @@ import argparse
 from ucimlrepo import fetch_ucirepo
 from collections.abc import Generator
 from gouda import *
-from swiss_cheese import MCAR, MAR, MNARrs
+from swiss_cheese import MCAR, MAR, MNAR
 from sklearn.experimental import enable_iterative_imputer
-from sklearn.impute import IterativeImputer
+from sklearn.impute import IterativeImputer, KNNImputer as KNNsk
 from missforest import MissForest as MissForestPy
+import time
 
 
 class Experiment:
-    def __init__(self, params, defaults)-> None:
+    def __init__(self, params, defaults) -> None:
         self.process(params, defaults)
         self.name = params["name"]
         self.model = get_model(params["model"])
@@ -26,31 +27,45 @@ class Experiment:
 
     def run(self):
         error = {}
+        times = {}
         for ds in self.params["datasets"]:
             print(f"Processing {ds}")
             if not self.supports_cat(ds):
                 print(f"skipping.. {ds}")
                 continue
             df = self.fetch_data(ds)
-            error[ds] = {}
+            error[self.current_dataset] = {}
+            times[self.current_dataset] = {}
             for p in self.params["missing_rates"]:
-                error[ds][p] = 0.0
+                error[self.current_dataset][p] = 0.0
+                times[self.current_dataset][p] = {
+                    "fit": 0.0, "impute": 0.0, "total": 0.0}
                 for seed in self.params["seeds"]:
                     missing = self.make_missing(df, p, seed)
-                    model = self.model(**self.params["model_params"]).fit(missing)
+                    start = time.perf_counter_ns()
+                    model = self.model(
+                        **self.params["model_params"]).fit(missing)
+                    times[self.current_dataset][p]["fit"] += (time.perf_counter_ns() -
+                                                              start) / len(self.params["seeds"])
                     imputed = model.transform(missing)
-                    error[ds][p] += self.compute_error(df, imputed)
-                error[ds][p] = float(error[ds][p] / len(self.params["seeds"]))
-        self.to_disk(error)
+                    times[self.current_dataset][p]["impute"] += (time.perf_counter_ns() -
+                                                                 start) / len(self.params["seeds"])
+                    error[self.current_dataset][p] += self.compute_error(
+                        df, imputed)
+                error[self.current_dataset][p] = float(
+                    error[self.current_dataset][p] / len(self.params["seeds"]))
+                times[self.current_dataset][p]["total"] = times[self.current_dataset][p]["fit"] + \
+                    times[self.current_dataset][p]["impute"]
+        self.to_disk(error, times)
 
     def make_missing(self, data, missing_rate, seed=None):
         match self.params["missing_mechanism"]:
             case "mcar":
-                return MCAR(random_seed=seed)(data,missing_rate)
+                return MCAR(random_seed=seed)(data, missing_rate)
             case "mnar":
-                return MNARrs(**self.params["missing_params"], seed=seed)(data,missing_rate)
+                return MNAR(**self.params["missing_params"], random_seed=seed)(data, missing_rate)
             case "mar":
-                return MAR(**self.params["missing_params"], seed=seed)(data,missing_rate)
+                return MAR(**self.params["missing_params"], random_seed=seed)(data, missing_rate)
             case _:
                 raise NotImplementedError
 
@@ -73,7 +88,7 @@ class Experiment:
             num_gt = (num_gt - min) / max
             num_imputed = (num_imputed - min) / max
             nmse_error = ((num_gt - num_imputed) ** 2).sum().sum()
-        else: 
+        else:
             nmse_error = 0.0
         if not self.cat_cols.empty:
             # compute categorical error
@@ -81,17 +96,17 @@ class Experiment:
             cat_imputed = imputed[self.cat_cols]
             mask = cat_gt == cat_imputed
             cat_error = 1.0 - (mask.sum().sum() / mask.shape[0])
-        else: 
+        else:
             cat_error = 0.0
 
         return cat_error + nmse_error
 
-    def to_disk(self, error):
+    def to_disk(self, error, times):
         os.makedirs(path := f"Results/{self.name}", exist_ok=True)
         with open(f"{path}/error.yaml", "w") as f:
             yaml.dump(error, f)
-
-
+        with open(f"{path}/timing.yaml", "w") as f:
+            yaml.dump(times, f)
 
     def fetch_data(self, id: int):
         data = fetch_ucirepo(id=id)
@@ -122,11 +137,13 @@ def _deep_update(base, override):
             result[k] = v
     return result
 
+
 def make_experiments(path: str) -> Generator[Experiment]:
     with open(path, "r") as f:
         conf = yaml.safe_load_all(f)
         default = next(conf)
     return (Experiment(defaults=default, params=c) for c in conf)
+
 
 def get_model(model):
     match model:
@@ -134,6 +151,8 @@ def get_model(model):
             return Mice
         case "knn":
             return KnnImputer
+        case "knn-sk":
+            return KNNsk
         case "simple":
             return SimpleImputer
         case "missforest":
@@ -146,7 +165,6 @@ def get_model(model):
             raise ValueError
 
 
-
 def parse_args():
     parser = argparse.ArgumentParser(description="")
     parser.add_argument(
@@ -157,14 +175,16 @@ def parse_args():
     )
     return parser.parse_args()
 
+
 if __name__ == "__main__":
     args = parse_args()
     print(args.e)  # args.e is a list
     for e in make_experiments("config.yaml"):
         if args.e is not None:
-            if e.name in args.e:
+            print("Running only selected experiments..")
+            if e.name not in args.e:
+                print(f"skipping {e.name}")
                 continue
         print(f"Starting {e.name}..")
         e.run()
         print("Done..")
-

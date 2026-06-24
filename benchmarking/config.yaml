@@ -1,13 +1,13 @@
 name: default
 datasets:
-  - 2
   - 53
-  - 222
-  - 320
-  - 109
-  - 19
-  - 14
-  - 545
+  # - 222
+  # - 320
+  # - 109
+  # - 19
+  # - 14
+  # - 545
+  # - 2
 missing_rates:
   - 0.1
   - 0.2
@@ -43,9 +43,10 @@ name: missforest
 model: missforest
 missing_mechanism: mcar
 model_params: 
-  - n_trees: 20
-  - max_depth: 20
-  - min_samples_leaf: 3
+  n_trees: 20
+  max_depth: 20
+  min_samples_leaf: 3
+  encoding: label
 
 ---
 name: iterative 
@@ -57,6 +58,13 @@ no_cat: True
 ---
 name: missforest-py
 model: missforest-py
+missing_mechanism: mcar
+model_params: null
+no_cat: True
+
+---
+name: knn-sk
+model: knn-sk
 missing_mechanism: mcar
 model_params: null
 no_cat: True
