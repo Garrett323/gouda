@@ -20,6 +20,7 @@ imputed = imputation_model.transform(df)
 ```
 
 # Imputation Algorithms
- - KNN 
- - MICE
- - Mean/Mode (Simple)
+ - KnnImputer
+ - Mice
+ - SimpleImputer (Mean/Mode)
+ - ConstantImputer
