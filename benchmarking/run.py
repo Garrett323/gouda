@@ -118,7 +118,7 @@ class Experiment:
         return df
 
     def supports_cat(self):
-        if self.params["no_cat"] and self.only_num:
+        if self.params["no_cat"] and not self.only_num:
             return False
         return True
 
@@ -178,9 +178,10 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     print(args.e)  # args.e is a list
+    if args.e is not None:
+        print("Running only selected experiments..")
     for e in make_experiments("config.yaml"):
         if args.e is not None:
-            print("Running only selected experiments..")
             if e.name not in args.e:
                 print(f"skipping {e.name}")
                 continue
