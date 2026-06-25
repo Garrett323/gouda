@@ -30,10 +30,10 @@ class Experiment:
         times = {}
         for ds in self.params["datasets"]:
             print(f"Processing {ds}")
-            if not self.supports_cat(ds):
-                print(f"skipping.. {ds}")
-                continue
             df = self.fetch_data(ds)
+            if not self.supports_cat():
+                print(f"skipping.. {self.current_dataset}")
+                continue
             error[self.current_dataset] = {}
             times[self.current_dataset] = {}
             for p in self.params["missing_rates"]:
@@ -117,9 +117,8 @@ class Experiment:
         self.only_num = self.cat_cols.empty
         return df
 
-    def supports_cat(self, id):
-        has_cat = {2}
-        if self.params["no_cat"] and id in has_cat:
+    def supports_cat(self):
+        if self.params["no_cat"] and self.only_num:
             return False
         return True
 
