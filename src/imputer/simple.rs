@@ -60,6 +60,18 @@ impl SimpleImputer {
         // return python object
         arr_to_out(py, &imputed, out, enc)
     }
+
+    pub fn fit_transform<'py>(
+        slf: Py<Self>,
+        py: Python<'py>,
+        data: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let slf = Self::fit(slf, py, data)?;
+        {
+            let inner = slf.borrow_mut(py);
+            inner.transform(py, data)
+        }
+    }
 }
 
 impl SimpleImputer {

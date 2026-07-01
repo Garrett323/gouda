@@ -30,7 +30,7 @@ fn label_encode(values: &[String]) -> (Vec<f64>, HashMap<String, Option<u64>>) {
     let map: HashMap<String, Option<u64>> = unique
         .iter()
         .map(|&s| match s {
-            "nan" | "NaN" => (s.to_owned(), None),
+            "nan" | "NaN" | "<NA>" => (s.to_owned(), None),
             _ => (s.to_owned(), {
                 let e = Some(counter);
                 counter += 1;
@@ -58,10 +58,19 @@ pub fn pyany_to_vec(
         "ndarray" => OUT::Numpy,
         "DataFrame" => {
             let columns = obj.getattr("columns")?;
-            let columns = columns.extract::<Vec<String>>()?;
+            let columns: Vec<String> = match columns.extract::<Vec<String>>() {
+                Ok(cols) => cols,
+                Err(_) => columns
+                    .call_method0("tolist")?
+                    .extract::<Vec<i64>>()?
+                    .into_iter()
+                    .map(|i| i.to_string())
+                    .collect(),
+            };
             OUT::DataFrame(columns)
         }
         _ => {
+            println!("{}", typ);
             return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
                 "Unsupported type: '{}'. Supported types are: {}",
                 typ, SUPPORTED_TYPES
