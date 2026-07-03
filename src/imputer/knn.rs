@@ -28,7 +28,7 @@ pub struct KnnImputer {
     weights: Weights,
 }
 
-const ALLOWED_WEIGHTS: [&str; 2] = ["uniform", "distance"];
+const ALLOWED_WEIGHTS: &[&str] = &["uniform", "distance"];
 const ALLOWED_METRICS: &[&str] = &["nan_euclid", "expected_distance", "gower"];
 
 #[pymethods]
@@ -36,22 +36,26 @@ impl KnnImputer {
     #[new]
     #[pyo3(signature = (k=5, metric="nan_euclid", weights="uniform", encoding=None))]
     pub fn new(k: usize, metric: &str, weights: &str, encoding: Option<&str>) -> KnnImputer {
-        assert!(ALLOWED_WEIGHTS.contains(&weights));
-        KnnImputer::sanity_check(&metric, &weights);
         KnnImputer {
             k,
             data: None,
             is_fitted: false,
-            metric: match metric {
+            metric: match metric.to_lowercase().as_str() {
                 "nan_euclid" => Metrics::NanEuclid,
                 "expected_distance" => Metrics::ExpectedDistance,
                 "gower" => Metrics::Gower(None),
-                _ => panic!("metric parameter not supported, {:?}", ALLOWED_METRICS),
+                s => panic!(
+                    "Metric parameter [{}] not supported, supported metrics: {:?}",
+                    s, ALLOWED_METRICS
+                ),
             },
-            weights: match weights {
+            weights: match weights.to_lowercase().as_str() {
                 "uniform" => Weights::Uniform,
                 "distance" => Weights::Distance,
-                _ => panic!("weight parameter not supported, {:?}", ALLOWED_WEIGHTS),
+                s => panic!(
+                    "Weight parameter [{}] not supported, supported weights: {:?}",
+                    s, ALLOWED_WEIGHTS
+                ),
             },
             cat_cols: None,
             num_cols: None,
@@ -217,21 +221,6 @@ impl KnnImputer {
                 max - min
             })
             .collect()
-    }
-
-    fn sanity_check(metric: &str, weights: &str) {
-        if !ALLOWED_WEIGHTS.contains(&weights) {
-            panic!(
-                "Please select a valid metric: [{:?}]\n{} is not supported",
-                ALLOWED_WEIGHTS, weights
-            );
-        }
-        if !ALLOWED_METRICS.contains(&metric) {
-            panic!(
-                "Please select a valid metric: [{:?}]\n{} is not supported",
-                ALLOWED_METRICS, metric
-            );
-        }
     }
 }
 

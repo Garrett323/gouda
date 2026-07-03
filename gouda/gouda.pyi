@@ -24,8 +24,9 @@ class ConstantImputer:
 class KnnImputer:
     k: int
 
-    def __init__(self, k: int = 5, metric: str = "nan_euclid",
-                 weights: str = "uniform",
+    def __init__(self, k: int = 5, 
+                 metric: Literal["nan_euclid", "gower", "expected_distance"] = "nan_euclid",
+                 weights: Literal["uniform", "distance"] = "uniform",
                  encoding: None | Literal["label"] = None
                  ) -> None: ...
 
