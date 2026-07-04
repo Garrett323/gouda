@@ -80,6 +80,7 @@ impl KnnImputer {
                 )?;
             };
             let (arr, _out, _enc) = utils::pyany_to_vec(data, &inner.string_encoding)?;
+            utils::raise_if_nan_col(arr.view())?;
             if let Metrics::Gower(_) = inner.metric {
                 inner.metric = Metrics::Gower(Some(inner.span(arr.view())));
                 let indices = _enc
@@ -111,6 +112,7 @@ impl KnnImputer {
         }
         let (arr, out, enc) = utils::pyany_to_vec(data, &self.string_encoding)?;
         // actual method
+        utils::check_feature_mismatch(self.data.as_ref().unwrap().ncols(), arr.ncols())?;
         let dist = match self.metric {
             Metrics::NanEuclid => Self::nan_euclid,
             Metrics::ExpectedDistance => Self::expected_distance,

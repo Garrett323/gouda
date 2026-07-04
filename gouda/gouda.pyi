@@ -17,7 +17,11 @@ class ConstantImputer:
         ...
 
     def transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
-            -> npt.NDArray[np.float64]:
+            -> npt.NDArray[np.float64] | pd.DataFrame:
+        ...
+
+    def fit_transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
+            -> npt.NDArray[np.float64] | pd.DataFrame:
         ...
 
 
@@ -34,7 +38,11 @@ class KnnImputer:
         ...
 
     def transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
-            -> npt.NDArray[np.float64]:
+            -> npt.NDArray[np.float64] | pd.DataFrame:
+        ...
+
+    def fit_transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
+            -> npt.NDArray[np.float64] | pd.DataFrame:
         ...
 
 class SVMImputer:
@@ -49,9 +57,15 @@ class SVMImputer:
         ...
 
     def transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
-            -> npt.NDArray[np.float64]:
+            -> npt.NDArray[np.float64] | pd.DataFrame:
         ...
 
+    def fit_transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
+            -> npt.NDArray[np.float64] | pd.DataFrame:
+        ...
+
+    def get_params(self) -> dict:
+        ...
 
 class SimpleImputer:
     def __init__(self,
@@ -62,9 +76,12 @@ class SimpleImputer:
         ...
 
     def transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
-            -> npt.NDArray[np.float64]:
+            -> npt.NDArray[np.float64] | pd.DataFrame:
         ...
 
+    def fit_transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
+            -> npt.NDArray[np.float64] | pd.DataFrame:
+        ...
 
 class Mice:
     n_iterations: int = 15
@@ -82,9 +99,12 @@ class Mice:
         ...
 
     def transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
-            -> npt.NDArray[np.float64]:
+            -> npt.NDArray[np.float64] | pd.DataFrame:
         ...
 
+    def fit_transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
+            -> npt.NDArray[np.float64] | pd.DataFrame:
+        ...
 
 class MissForest:
     is_fitted: bool
@@ -103,5 +123,9 @@ class MissForest:
         ...
 
     def transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
-            -> npt.NDArray[np.float64]:
+            -> npt.NDArray[np.float64] | pd.DataFrame:
+        ...
+
+    def fit_transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
+            -> npt.NDArray[np.float64] | pd.DataFrame:
         ...

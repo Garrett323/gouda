@@ -5,7 +5,9 @@ use libsvm_rs::{
 };
 use ndarray::{Array2, ArrayView1, ArrayView2};
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use rayon::prelude::*;
+use std::collections::HashMap;
 
 #[pyclass]
 pub struct SVMImputer {
@@ -53,6 +55,7 @@ impl SVMImputer {
         {
             let mut inner = slf.borrow_mut(py);
             let (arr, _out, _enc) = utils::pyany_to_vec(data, &inner.string_encoding)?;
+            utils::raise_if_nan_col(arr.view())?;
 
             if let Some(enc) = _enc {
                 let indices = enc.string_column_indices;
@@ -75,11 +78,10 @@ impl SVMImputer {
     ) -> PyResult<Bound<'py, PyAny>> {
         // check if fitted
         if !self.is_fitted {
-            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
-                "Imputer is not fitted",
-            )));
+            return Err(utils::raise_not_fitted(py));
         }
         let (arr, out, enc) = utils::pyany_to_vec(data, &self.string_encoding)?;
+        utils::check_feature_mismatch(self.models.len(), arr.ncols())?;
         // actual method
         let imputed = self.impute(arr.view());
         // return python object
@@ -96,6 +98,21 @@ impl SVMImputer {
             let inner = slf.borrow_mut(py);
             inner.transform(py, data)
         }
+    }
+
+    pub fn get_params(&self, py: Python) -> PyResult<Py<PyDict>> {
+        let dict = PyDict::new(py);
+
+        dict.set_item("kernel", self.kernel().to_owned())?;
+        dict.set_item(
+            "encoding",
+            match self.string_encoding {
+                None => None,
+                Some(_) => Some("label"),
+            },
+        )?;
+
+        Ok(dict.into())
     }
 
     #[getter]
