@@ -37,6 +37,21 @@ class KnnImputer:
             -> npt.NDArray[np.float64]:
         ...
 
+class SVMImputer:
+    kernel: str
+
+    def __init__(self,
+                 kernel: Literal["linear", "rbf", "polynomial", "sigmoid", "precomputed"] = "linear",
+                 encoding: None | Literal["label"] = None
+                 ) -> None: ...
+
+    def fit(self, data: npt.NDArray[np.float64] | pd.DataFrame) -> Self:
+        ...
+
+    def transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
+            -> npt.NDArray[np.float64]:
+        ...
+
 
 class SimpleImputer:
     def __init__(self,

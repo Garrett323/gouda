@@ -125,8 +125,8 @@ impl MissForest {
             })
             .collect();
 
-        self.init.fit_impl(data, None);
-        let mut cur = self.init.impute(data);
+        self.init.fit_impl(data.view(), None);
+        let mut cur = self.init.impute(data.view());
         let mut nxt = cur.clone();
 
         let mut gamma_old = f64::MAX;
@@ -164,7 +164,7 @@ impl MissForest {
         self
     }
     fn impute(&self, data: &Array2<f64>) -> Array2<f64> {
-        let mut imputed = self.init.impute(data);
+        let mut imputed = self.init.impute(data.view());
         let static_imputed = imputed.clone();
         imputed
             .axis_iter_mut(Axis(1))
