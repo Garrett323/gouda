@@ -24,3 +24,4 @@ imputed = imputation_model.transform(df)
  - Mice
  - SimpleImputer (Mean/Mode)
  - ConstantImputer
+ - SVMImputer
