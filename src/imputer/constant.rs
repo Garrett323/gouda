@@ -5,9 +5,12 @@ use crate::utils::{
 };
 use ndarray::Array2;
 use pyo3::prelude::*;
+use pyo3::types::{PyAny, PyBytes};
 use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
+use serde::{Deserialize, Serialize};
 
-#[pyclass]
+#[pyclass(name = "ConstantImputerRS", module = "gouda.gouda")]
+#[derive(Serialize, Deserialize)]
 pub struct ConstantImputer {
     value: f64,
     is_fitted: bool,
@@ -82,6 +85,39 @@ impl ConstantImputer {
             let inner = slf.borrow_mut(py);
             inner.transform(py, data)
         }
+    }
+
+    #[getter]
+    fn encoding(&self) -> Option<&str> {
+        match self.string_encoding {
+            None => None,
+            Some(_) => Some("label"),
+        }
+    }
+
+    fn _rgs__(&self) -> (Option<String>,) {
+        (self.encoding().map(|s| s.to_string()),)
+    }
+
+    fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = bincode::serialize(&self).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "failed to pickle ConstantImputer: {e}"
+            ))
+        })?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    fn __setstate__(&mut self, state: &Bound<'_, PyBytes>) -> PyResult<()> {
+        let decoded: ConstantImputer = bincode::deserialize(state.as_bytes()).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "failed to unpickle ConstantImputer: {e}"
+            ))
+        })?;
+        self.value = decoded.value;
+        self.string_encoding = decoded.string_encoding;
+        self.is_fitted = decoded.is_fitted;
+        Ok(())
     }
 }
 

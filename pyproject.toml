@@ -32,6 +32,7 @@ dev = [
     "pyyaml>=6.0.3",
     "ucimlrepo>=0.0.7",
     "swiss-cheese==0.1.6",
+    "scikit-learn-stubs>=0.0.3",
 ]
 
 [tool.setuptools.packages.find]

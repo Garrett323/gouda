@@ -1,4 +1,5 @@
-from gouda.gouda import KnnImputer, SimpleImputer, ConstantImputer, Mice, MissForest
+from gouda.gouda import  MissForest
+from gouda.wrapper import KnnImputer, SimpleImputer, ConstantImputer, SVMImputer, Mice
 # from gouda.deeplearning.gain import GAIN
 
-__all__ = ["KnnImputer", "SimpleImputer", "ConstantImputer", "Mice", "MissForest"]  # , "GAIN"]
+__all__ = ["KnnImputer", "SimpleImputer", "ConstantImputer", "Mice", "MissForest", "SVMImputer"]  # , "GAIN"]

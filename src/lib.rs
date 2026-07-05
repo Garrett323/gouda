@@ -10,6 +10,7 @@ mod gouda {
     #[pymodule_init]
     fn init(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module.add_class::<imputer::KnnImputer>()?;
+        module.add_class::<imputer::SVMImputer>()?;
         module.add_class::<imputer::Mice>()?;
         module.add_class::<imputer::SimpleImputer>()?;
         module.add_class::<imputer::ConstantImputer>()?;

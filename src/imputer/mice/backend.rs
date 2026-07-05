@@ -1,15 +1,66 @@
 use crate::utils::SendPtr;
 use ndarray::{Array1, Array2, ArrayView1, Axis};
 use ndarray_linalg::{LeastSquaresSvd, SVD};
+use serde::{Deserialize, Serialize};
 
 use rand::prelude::*;
 use rayon::prelude::*;
+use std::collections::HashSet;
 use std::sync::Mutex;
 
-pub trait Solver: Send + Sync {
+#[derive(Serialize, Deserialize, Clone)]
+pub enum Solver {
+    Linear(LinearRegression),
+    Logistic(LogisticRegression),
+    PMM(PMM),
+    Ridge(Ridge),
+}
+
+fn default_rng() -> Mutex<SmallRng> {
+    Mutex::new(SmallRng::seed_from_u64(42))
+}
+
+impl Solver {
+    pub fn predict(&self, arr: &Array2<f64>) -> Array1<f64> {
+        match self {
+            Solver::Linear(model) => model.predict(arr),
+            Solver::Logistic(model) => model.predict(arr),
+            Solver::PMM(model) => model.predict(arr),
+            Solver::Ridge(model) => model.predict(arr),
+        }
+    }
+
+    pub fn fit(&mut self, arr: &Array2<f64>, target: &Array1<f64>) {
+        match self {
+            Solver::Linear(model) => model.fit(arr, target),
+            Solver::Logistic(model) => model.fit(arr, target),
+            Solver::PMM(model) => model.fit(arr, target),
+            Solver::Ridge(model) => model.fit(arr, target),
+        }
+    }
+
+    pub fn coefficients(&self) -> Option<ArrayView1<'_, f64>> {
+        match self {
+            Solver::Linear(model) => model.coefficients(),
+            Solver::Logistic(model) => model.coefficients(),
+            Solver::PMM(model) => model.coefficients(),
+            Solver::Ridge(model) => model.coefficients(),
+        }
+    }
+
+    pub fn bias(&self) -> bool {
+        match self {
+            Solver::Linear(model) => model.bias(),
+            Solver::Logistic(model) => model.bias(),
+            Solver::PMM(model) => model.bias(),
+            Solver::Ridge(model) => model.bias(),
+        }
+    }
+}
+
+pub trait Regressor: Send + Sync {
     fn bias(&self) -> bool;
     fn coefficients(&self) -> Option<ArrayView1<'_, f64>>;
-    fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>);
     fn predict(&self, points: &Array2<f64>) -> Array1<f64> {
         let points = if self.bias() {
             &add_bias_column(points)
@@ -19,27 +70,31 @@ pub trait Solver: Send + Sync {
         let weights = self.coefficients().expect("Unable to find weights!");
         points.dot(&weights)
     }
-    fn clone(&self) -> Box<dyn Solver>;
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct PMM {
     n_neighbors: usize,
     pool: Option<Array1<f64>>,
-    model: Box<dyn Solver>,
+    model: Box<Solver>,
+    #[serde(skip, default = "default_rng")]
     rng: Mutex<rand::rngs::SmallRng>,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
 pub struct LinearRegression {
     coefficients: Option<Array1<f64>>,
     bias: bool,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
 pub struct LogisticRegression {
     coefficients: Option<Array2<f64>>,
     n_classes: usize,
     bias: bool,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Ridge {
     alpha: f64,
     coefficients: Option<Array1<f64>>,
@@ -53,46 +108,7 @@ impl Ridge {
             bias: true,
         }
     }
-}
 
-impl LinearRegression {
-    pub fn new() -> LinearRegression {
-        LinearRegression {
-            coefficients: None,
-            bias: true,
-        }
-    }
-}
-
-impl Solver for LinearRegression {
-    fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>) {
-        let data = if self.bias {
-            &add_bias_column(data)
-        } else {
-            data
-        };
-        self.coefficients = Some(
-            data.least_squares(&target)
-                .expect("No least squares solution possible")
-                .solution,
-        );
-    }
-    fn bias(&self) -> bool {
-        self.bias
-    }
-    fn coefficients(&self) -> Option<ArrayView1<'_, f64>> {
-        Some(self.coefficients.as_ref().unwrap().view())
-    }
-
-    fn clone(&self) -> Box<dyn Solver> {
-        Box::new(LinearRegression {
-            coefficients: self.coefficients.clone(),
-            bias: self.bias.clone(),
-        })
-    }
-}
-
-impl Solver for Ridge {
     fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>) {
         let x_mean = data.mean_axis(Axis(0)).unwrap(); // original mean, keep this
         let data = data - &x_mean;
@@ -115,19 +131,43 @@ impl Solver for Ridge {
 
         self.coefficients = Some(beta);
     }
+}
+impl Regressor for Ridge {
     fn bias(&self) -> bool {
         self.bias
     }
     fn coefficients(&self) -> Option<ArrayView1<'_, f64>> {
         Some(self.coefficients.as_ref().unwrap().view())
     }
+}
 
-    fn clone(&self) -> Box<dyn Solver> {
-        Box::new(Ridge {
-            coefficients: self.coefficients.clone(),
-            bias: self.bias.clone(),
-            alpha: self.alpha.clone(),
-        })
+impl LinearRegression {
+    pub fn new() -> LinearRegression {
+        LinearRegression {
+            coefficients: None,
+            bias: true,
+        }
+    }
+
+    fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>) {
+        let data = if self.bias {
+            &add_bias_column(data)
+        } else {
+            data
+        };
+        self.coefficients = Some(
+            data.least_squares(&target)
+                .expect("No least squares solution possible")
+                .solution,
+        );
+    }
+}
+impl Regressor for LinearRegression {
+    fn bias(&self) -> bool {
+        self.bias
+    }
+    fn coefficients(&self) -> Option<ArrayView1<'_, f64>> {
+        Some(self.coefficients.as_ref().unwrap().view())
     }
 }
 
@@ -139,11 +179,7 @@ impl LogisticRegression {
             bias: true,
         }
     }
-}
 
-use std::collections::HashSet;
-
-impl Solver for LogisticRegression {
     fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>) {
         let target: Vec<u64> = target.par_iter().map(|&x| x as u64).collect();
         self.n_classes = target
@@ -184,14 +220,6 @@ impl Solver for LogisticRegression {
         // Some(self.coefficients.as_ref().unwrap().row(0))
     }
 
-    fn clone(&self) -> Box<dyn Solver> {
-        Box::new(LogisticRegression {
-            coefficients: self.coefficients.clone(),
-            n_classes: self.n_classes,
-            bias: self.bias.clone(),
-        })
-    }
-
     fn predict(&self, points: &Array2<f64>) -> Array1<f64> {
         let points = if self.bias() {
             &add_bias_column(points)
@@ -220,9 +248,10 @@ const PMM_BACKEND: &[&str] = &["linear", "ridge"];
 impl PMM {
     pub fn new(n_neighbors: usize, backend: &str, alpha: Option<f64>) -> PMM {
         let model = match backend.to_lowercase().as_str() {
-            "linear" => Box::new(LinearRegression::new()) as Box<dyn Solver>,
-            "ridge" => Box::new(Ridge::new(alpha.expect("Provide a Some(value) for alpha")))
-                as Box<dyn Solver>,
+            "linear" => Box::new(Solver::Linear(LinearRegression::new())),
+            "ridge" => Box::new(Solver::Ridge(Ridge::new(
+                alpha.expect("Provide a Some(value) for alpha"),
+            ))),
             _ => panic!(
                 "Solver {backend} not supported! List of supported backend for PMM {:?}",
                 PMM_BACKEND
@@ -240,9 +269,7 @@ impl PMM {
         let mut rng = self.rng.lock().unwrap();
         arr.choose(&mut rng).unwrap().clone()
     }
-}
 
-impl Solver for PMM {
     fn bias(&self) -> bool {
         self.model.bias()
     }
@@ -252,20 +279,6 @@ impl Solver for PMM {
     fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>) {
         self.pool = Some(target.iter().filter(|e| !e.is_nan()).copied().collect());
         self.model.fit(data, target);
-    }
-    fn clone(&self) -> Box<dyn Solver> {
-        let pool = if let Some(v) = &self.pool {
-            Some(v.clone())
-        } else {
-            None
-        };
-        let rng = Mutex::new(self.rng.lock().unwrap().clone());
-        Box::new(PMM {
-            n_neighbors: self.n_neighbors.clone(),
-            pool,
-            model: self.model.clone(),
-            rng,
-        }) as Box<dyn Solver>
     }
 
     fn predict(&self, points: &Array2<f64>) -> Array1<f64> {
@@ -291,6 +304,17 @@ impl Solver for PMM {
             }
         });
         samples
+    }
+}
+
+impl Clone for PMM {
+    fn clone(&self) -> Self {
+        Self {
+            n_neighbors: self.n_neighbors,
+            pool: self.pool.clone(),
+            model: self.model.clone(),
+            rng: Mutex::new(self.rng.lock().expect("rng mutex poisoned").clone()),
+        }
     }
 }
 

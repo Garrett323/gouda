@@ -4,28 +4,36 @@ import pandas as pd
 from typing import Literal, Self
 
 
-class ConstantImputer:
+class ConstantImputerRS:
     def __init__(self, constant: float,
                  encoding: None | Literal["label"] = None
                  ) -> None: ...
 
     @staticmethod
-    def zero() -> "ConstantImputer":
+    def zero() -> "ConstantImputerRS":
         ...
 
     def fit(self, _data: npt.NDArray[np.float64] | pd.DataFrame) -> Self:
         ...
 
     def transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
-            -> npt.NDArray[np.float64]:
+            -> npt.NDArray[np.float64] | pd.DataFrame:
+        ...
+
+    def fit_transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
+            -> npt.NDArray[np.float64] | pd.DataFrame:
         ...
 
 
-class KnnImputer:
+class KnnImputerRS:
     k: int
+    encoding: str
+    metric: str
+    weights: str
 
-    def __init__(self, k: int = 5, metric: str = "nan_euclid",
-                 weights: str = "uniform",
+    def __init__(self, k: int = 5, 
+                 metric: Literal["nan_euclid", "gower", "expected_distance"] = "nan_euclid",
+                 weights: Literal["uniform", "distance"] = "uniform",
                  encoding: None | Literal["label"] = None
                  ) -> None: ...
 
@@ -33,11 +41,39 @@ class KnnImputer:
         ...
 
     def transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
-            -> npt.NDArray[np.float64]:
+            -> npt.NDArray[np.float64] | pd.DataFrame:
         ...
 
+    def fit_transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
+            -> npt.NDArray[np.float64] | pd.DataFrame:
+        ...
 
-class SimpleImputer:
+    def get_params(self) -> dict:
+        ...
+
+class SVMImputerRS:
+    kernel: str
+
+    def __init__(self,
+                 kernel: Literal["linear", "rbf", "polynomial", "sigmoid", "precomputed"] = "linear",
+                 encoding: None | Literal["label"] = None
+                 ) -> None: ...
+
+    def fit(self, data: npt.NDArray[np.float64] | pd.DataFrame) -> Self:
+        ...
+
+    def transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
+            -> npt.NDArray[np.float64] | pd.DataFrame:
+        ...
+
+    def fit_transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
+            -> npt.NDArray[np.float64] | pd.DataFrame:
+        ...
+
+    def get_params(self) -> dict:
+        ...
+
+class SimpleImputerRS:
     def __init__(self,
                  encoding: None | Literal["label"] = None
                  ) -> None: ...
@@ -46,16 +82,21 @@ class SimpleImputer:
         ...
 
     def transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
-            -> npt.NDArray[np.float64]:
+            -> npt.NDArray[np.float64] | pd.DataFrame:
         ...
 
+    def fit_transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
+            -> npt.NDArray[np.float64] | pd.DataFrame:
+        ...
 
-class Mice:
-    n_iterations: int = 15
+class MiceRS:
+    _n_iter: int = 0
+    max_iter: int = 10
     backend: Literal["linear", "ridge", "pmm"] = "linear"
     alpha: float = 1.0
 
-    def __init__(self, max_iter: int = 10,
+    def __init__(self, 
+                 max_iter: int = 10,
                  backend: Literal["linear", "ridge", "pmm"] = "linear",
                  alpha: float = 1.0,
                  pmm_backend: Literal["linear", "ridge"] = "linear",
@@ -66,9 +107,12 @@ class Mice:
         ...
 
     def transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
-            -> npt.NDArray[np.float64]:
+            -> npt.NDArray[np.float64] | pd.DataFrame:
         ...
 
+    def fit_transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
+            -> npt.NDArray[np.float64] | pd.DataFrame:
+        ...
 
 class MissForest:
     is_fitted: bool
@@ -87,5 +131,9 @@ class MissForest:
         ...
 
     def transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
-            -> npt.NDArray[np.float64]:
+            -> npt.NDArray[np.float64] | pd.DataFrame:
+        ...
+
+    def fit_transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
+            -> npt.NDArray[np.float64] | pd.DataFrame:
         ...

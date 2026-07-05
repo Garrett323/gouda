@@ -1,7 +1,8 @@
-use ndarray::Array2;
+use ndarray::{Array2, ArrayView2};
 use numpy::{PyArrayMethods, ToPyArray};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyString};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 const SUPPORTED_TYPES: &str = "numpy.ndarray, pandas.DataFrame";
@@ -17,8 +18,40 @@ pub struct EncodingInfo {
     pub reverse_maps: HashMap<usize, HashMap<u64, String>>,
 }
 
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum StringEncoding {
     LabelEncoding,
+}
+
+pub fn raise_not_fitted(py: Python<'_>) -> PyErr {
+    let validation = py.import("sklearn.exceptions").unwrap();
+
+    let exc = validation.getattr("NotFittedError").unwrap();
+
+    PyErr::from_type(
+        exc.cast_into().unwrap(),
+        "This estimator is not fitted yet. Call 'fit' before using this estimator.",
+    )
+}
+
+pub fn raise_if_nan_col(arr: ArrayView2<f64>) -> Result<(), PyErr> {
+    match super::all_empty_column(arr) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "The following columns contain only NaNs can {:?}",
+            e
+        ))),
+    }
+}
+
+pub fn check_feature_mismatch(expected: usize, actual: usize) -> Result<(), PyErr> {
+    if expected != actual {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "The estimator was fitted on {} features, but {} were provided!",
+            expected, actual
+        )));
+    }
+    Ok(())
 }
 
 fn label_encode(values: &[String]) -> (Vec<f64>, HashMap<String, Option<u64>>) {

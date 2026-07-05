@@ -1,26 +1,48 @@
-# Imputation Library
+# Gouda
 
-Commonly available imputation tools lack support for categorical values, and sometimes do not work at all.
-This project wants to add robust imputation benchmarks, with significant performance boost to other available tools.
+Fast, scikit-learn compatible imputation for Python, implemented primarily in Rust.
 
-__Installation:__
+Designed for mixed-type datasets with missing values, including categorical features.
+
+## Features
+
+- 🚀 Rust-powered performance
+- ✅ Fully scikit-learn compatible (`fit`, `transform`, `fit_transform`)
+- 🐼 Supports NumPy arrays and pandas DataFrames
+- 🏷️ Native support for categorical features
+- 💾 Pickle compatible
+
+## Installation
+
 ```bash
 pip install gouda-cheese
+# or
 uv add gouda-cheese
 ```
 
-__Usage:__
+## Usage
+
 ```python
 from gouda import KnnImputer
 
-df: pd.DataFrame
-
-imputation_model = KnnImputer().fit(df)
-imputed = imputation_model.transform(df)
+imputer = KnnImputer()
+X_imputed = imputer.fit_transform(X)
 ```
 
-# Imputation Algorithms
- - KnnImputer
- - Mice
- - SimpleImputer (Mean/Mode)
- - ConstantImputer
+## Available Imputers
+
+- `KnnImputer`
+- `Mice`
+- `SimpleImputer`
+- `ConstantImputer`
+- `SVMImputer`
+
+## Why Gouda?
+
+Most existing imputation libraries either:
+- only support numerical data,
+- require cumbersome preprocessing for categoricals, or
+- become slow on large datasets.
+- limited selection of algorithms.
+
+Gouda provides high-performance, sklearn-compatible imputers with first-class support for mixed numerical and categorical data.

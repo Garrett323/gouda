@@ -1,16 +1,21 @@
 use super::backend::{LinearRegression, LogisticRegression, PMM, Ridge, Solver};
 use crate::imputer::SimpleImputer;
 use crate::utils::{self, SendPtr, StringEncoding};
-use ndarray::{Array1, Array2, Axis};
+use ndarray::{Array1, Array2, ArrayView2, Axis};
 use pyo3::prelude::*;
+use pyo3::types::{PyAny, PyBytes};
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 
-#[pyclass]
+#[pyclass(name = "MiceRS", module = "gouda.gouda")]
+#[derive(Serialize, Deserialize)]
 pub struct Mice {
     max_iter: usize,
-    backend: Box<dyn Solver>,
-    cat_backend: Box<dyn Solver>,
-    models: Vec<Box<dyn Solver>>,
+    #[pyo3(get)]
+    _n_iter: usize,
+    backend: Solver,
+    cat_backend: Solver,
+    models: Vec<Solver>,
     is_fitted: bool,
     init: SimpleImputer,
     string_encoding: Option<StringEncoding>,
@@ -29,15 +34,16 @@ impl Mice {
         encoding: Option<&str>,
     ) -> Mice {
         let backend = match backend.to_lowercase().as_str() {
-            "linear" => Box::new(LinearRegression::new()) as Box<dyn Solver>,
-            "ridge" => Box::new(Ridge::new(alpha)) as Box<dyn Solver>,
-            "pmm" => Box::new(PMM::new(5, pmm_backend, Some(alpha))) as Box<dyn Solver>,
+            "linear" => Solver::Linear(LinearRegression::new()),
+            "ridge" => Solver::Ridge(Ridge::new(alpha)),
+            "pmm" => Solver::PMM(PMM::new(5, pmm_backend, Some(alpha))),
             _ => panic!("Solver {backend} not supported!"),
         };
         Mice {
             max_iter,
+            _n_iter: 0, // needed for sklearn compliance
             backend: backend,
-            cat_backend: Box::new(LogisticRegression::new()),
+            cat_backend: Solver::Logistic(LogisticRegression::new()),
             models: Vec::new(),
             is_fitted: false,
             string_encoding: match encoding {
@@ -54,11 +60,11 @@ impl Mice {
             let mut inner = slf.borrow_mut(py);
             let (arr, _out, enc) = utils::pyany_to_vec(data, &inner.string_encoding)?;
             if let Some(_) = inner.string_encoding {
-                inner.cat_columns = Some(enc.unwrap().string_column_indices);
+                inner.cat_columns = Some(enc.map_or(Vec::new(), |e| e.string_column_indices));
             } else {
                 inner.cat_columns = None;
             }
-            inner.fit_impl(&arr);
+            inner.fit_impl(arr.view());
             inner.is_fitted = true;
         } // dropping inner here (releasing the mutex)
         Ok(slf)
@@ -76,7 +82,7 @@ impl Mice {
             )));
         }
         let (arr, out, enc) = utils::pyany_to_vec(data, &self.string_encoding)?;
-        let imputed = self.impute(&arr);
+        let imputed = self.impute(arr.view());
         // return python object
         utils::arr_to_out(py, &imputed, out, enc)
     }
@@ -91,6 +97,37 @@ impl Mice {
             let inner = slf.borrow_mut(py);
             inner.transform(py, data)
         }
+    }
+
+    #[getter]
+    fn encoding(&self) -> Option<&str> {
+        match self.string_encoding {
+            None => None,
+            Some(_) => Some("label"),
+        }
+    }
+
+    fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = bincode::serialize(&self).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("failed to pickle Mice: {e}"))
+        })?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    fn __setstate__(&mut self, state: &Bound<'_, PyBytes>) -> PyResult<()> {
+        let decoded: Mice = bincode::deserialize(state.as_bytes()).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("failed to unpickle Mice: {e}"))
+        })?;
+        self.max_iter = decoded.max_iter;
+        self._n_iter = decoded._n_iter;
+        self.backend = decoded.backend;
+        self.cat_backend = decoded.cat_backend;
+        self.models = decoded.models;
+        self.is_fitted = decoded.is_fitted;
+        self.init = decoded.init;
+        self.string_encoding = decoded.string_encoding;
+        self.cat_columns = decoded.cat_columns;
+        Ok(())
     }
 }
 
@@ -108,13 +145,13 @@ impl Mice {
         Self::new(max_iter, "pmm", 1.0, "linear", None)
     }
 
-    fn impute(&self, data: &Array2<f64>) -> Array2<f64> {
+    fn impute(&self, data: ArrayView2<f64>) -> Array2<f64> {
         // initial mean imputation
-        let mut imputed = self.init.impute(&data);
+        let mut imputed = self.init.impute(data.view());
         for _ in 0..self.max_iter {
             let imp_ptr = std::sync::Arc::new(SendPtr(imputed.as_mut_ptr()));
             (0..data.ncols()).into_par_iter().for_each(|j| {
-                let (_, x_test, _, missing_indices) = split(&imputed, data, j);
+                let (_, x_test, _, missing_indices) = split((&imputed).view(), data, j);
                 let ptr = std::sync::Arc::clone(&imp_ptr);
                 let predictions = self.models[j].predict(&x_test);
                 for (k, v) in predictions.iter().enumerate() {
@@ -127,8 +164,8 @@ impl Mice {
         imputed
     }
 
-    fn fit_impl(&mut self, data: &Array2<f64>) -> &Self {
-        let mut imputed = self.init.fit_impl(&data, None).impute(&data);
+    fn fit_impl(&mut self, data: ArrayView2<f64>) -> &Self {
+        let mut imputed = self.init.fit_impl(data, None).impute(data);
         let mut models: Vec<_> = (0..data.ncols())
             .into_iter()
             .map(|i| {
@@ -142,7 +179,7 @@ impl Mice {
         let imp_ptr = std::sync::Arc::new(SendPtr(imputed.as_mut_ptr()));
         for _ in 0..self.max_iter {
             models.par_iter_mut().enumerate().for_each(|(j, m)| {
-                let (x_train, x_test, y_train, missing_indices) = split(&imputed, data, j);
+                let (x_train, x_test, y_train, missing_indices) = split((&imputed).into(), data, j);
                 m.fit(&x_train, &y_train);
                 let ptr = std::sync::Arc::clone(&imp_ptr);
                 for (k, v) in m.predict(&x_test).iter().enumerate() {
@@ -152,14 +189,15 @@ impl Mice {
                 }
             });
         }
+        self._n_iter = self.max_iter;
         self.models = models;
         self
     }
 }
 
 fn split(
-    imputed: &Array2<f64>,
-    missing: &Array2<f64>,
+    imputed: ArrayView2<f64>,
+    missing: ArrayView2<f64>,
     col: usize,
 ) -> (Array2<f64>, Array2<f64>, Array1<f64>, Vec<usize>) {
     let x = ndarray::concatenate(
@@ -191,8 +229,10 @@ mod test {
     #[test]
     fn move_away_from_initial() {
         let data = Array2::from_shape_vec((8, 4), POINTS.to_vec()).unwrap();
-        let simple = SimpleImputer::new(None).fit_impl(&data, None).impute(&data);
-        let mice = Mice::linear(2).fit_impl(&data).impute(&data);
+        let simple = SimpleImputer::new(None)
+            .fit_impl(data.view(), None)
+            .impute(data.view());
+        let mice = Mice::linear(2).fit_impl(data.view()).impute(data.view());
         let diff = simple.iter().zip(&mice).any(|(p, q)| (p - q).abs() > 1e-6);
         println!("Simple: \n{}\n", &simple);
         println!("Mice: \n{}\n", &mice);
@@ -202,8 +242,10 @@ mod test {
     #[test]
     fn ridge_neq_lin() {
         let data = Array2::from_shape_vec((8, 4), POINTS.to_vec()).unwrap();
-        let ridge = Mice::ridge(2, 1.0).fit_impl(&data).impute(&data);
-        let lin = Mice::linear(2).fit_impl(&data).impute(&data);
+        let ridge = Mice::ridge(2, 1.0)
+            .fit_impl(data.view())
+            .impute(data.view());
+        let lin = Mice::linear(2).fit_impl(data.view()).impute(data.view());
         let diff = ridge.iter().zip(&lin).any(|(p, q)| (p - q).abs() > 1e-6);
         println!("ridge: \n{}\n", &ridge);
         println!("linear: \n{}\n", &lin);
@@ -213,12 +255,12 @@ mod test {
     #[test]
     fn pmm() {
         let data = Array2::from_shape_vec((8, 4), POINTS.to_vec()).unwrap();
-        let pmm = Mice::pmm(2).fit_impl(&data).impute(&data);
+        let pmm = Mice::pmm(2).fit_impl(data.view()).impute(data.view());
         println!("ridge: \n{}\n", &pmm);
         for e in &pmm {
             assert!(!e.is_nan());
         }
-        let lin = Mice::linear(2).fit_impl(&data).impute(&data);
+        let lin = Mice::linear(2).fit_impl(data.view()).impute(data.view());
         let diff = pmm.iter().zip(&lin).any(|(p, q)| (p - q).abs() > 1e-6);
         assert!(diff, "Linear == PMM values :(");
     }
