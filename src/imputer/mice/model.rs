@@ -1,16 +1,21 @@
-use super::backend::{LinearRegression, LogisticRegression, Ridge, Solver, PMM};
+use super::backend::{LinearRegression, LogisticRegression, PMM, Ridge, Solver};
 use crate::imputer::SimpleImputer;
 use crate::utils::{self, SendPtr, StringEncoding};
 use ndarray::{Array1, Array2, ArrayView2, Axis};
 use pyo3::prelude::*;
+use pyo3::types::{PyAny, PyBytes};
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 
-#[pyclass]
+#[pyclass(name = "MiceRS", module = "gouda.gouda")]
+#[derive(Serialize, Deserialize)]
 pub struct Mice {
     max_iter: usize,
-    backend: Box<dyn Solver>,
-    cat_backend: Box<dyn Solver>,
-    models: Vec<Box<dyn Solver>>,
+    #[pyo3(get)]
+    _n_iter: usize,
+    backend: Solver,
+    cat_backend: Solver,
+    models: Vec<Solver>,
     is_fitted: bool,
     init: SimpleImputer,
     string_encoding: Option<StringEncoding>,
@@ -29,15 +34,16 @@ impl Mice {
         encoding: Option<&str>,
     ) -> Mice {
         let backend = match backend.to_lowercase().as_str() {
-            "linear" => Box::new(LinearRegression::new()) as Box<dyn Solver>,
-            "ridge" => Box::new(Ridge::new(alpha)) as Box<dyn Solver>,
-            "pmm" => Box::new(PMM::new(5, pmm_backend, Some(alpha))) as Box<dyn Solver>,
+            "linear" => Solver::Linear(LinearRegression::new()),
+            "ridge" => Solver::Ridge(Ridge::new(alpha)),
+            "pmm" => Solver::PMM(PMM::new(5, pmm_backend, Some(alpha))),
             _ => panic!("Solver {backend} not supported!"),
         };
         Mice {
             max_iter,
+            _n_iter: 0, // needed for sklearn compliance
             backend: backend,
-            cat_backend: Box::new(LogisticRegression::new()),
+            cat_backend: Solver::Logistic(LogisticRegression::new()),
             models: Vec::new(),
             is_fitted: false,
             string_encoding: match encoding {
@@ -54,7 +60,7 @@ impl Mice {
             let mut inner = slf.borrow_mut(py);
             let (arr, _out, enc) = utils::pyany_to_vec(data, &inner.string_encoding)?;
             if let Some(_) = inner.string_encoding {
-                inner.cat_columns = Some(enc.unwrap().string_column_indices);
+                inner.cat_columns = Some(enc.map_or(Vec::new(), |e| e.string_column_indices));
             } else {
                 inner.cat_columns = None;
             }
@@ -91,6 +97,37 @@ impl Mice {
             let inner = slf.borrow_mut(py);
             inner.transform(py, data)
         }
+    }
+
+    #[getter]
+    fn encoding(&self) -> Option<&str> {
+        match self.string_encoding {
+            None => None,
+            Some(_) => Some("label"),
+        }
+    }
+
+    fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = bincode::serialize(&self).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("failed to pickle Mice: {e}"))
+        })?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    fn __setstate__(&mut self, state: &Bound<'_, PyBytes>) -> PyResult<()> {
+        let decoded: Mice = bincode::deserialize(state.as_bytes()).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("failed to unpickle Mice: {e}"))
+        })?;
+        self.max_iter = decoded.max_iter;
+        self._n_iter = decoded._n_iter;
+        self.backend = decoded.backend;
+        self.cat_backend = decoded.cat_backend;
+        self.models = decoded.models;
+        self.is_fitted = decoded.is_fitted;
+        self.init = decoded.init;
+        self.string_encoding = decoded.string_encoding;
+        self.cat_columns = decoded.cat_columns;
+        Ok(())
     }
 }
 
@@ -152,6 +189,7 @@ impl Mice {
                 }
             });
         }
+        self._n_iter = self.max_iter;
         self.models = models;
         self
     }

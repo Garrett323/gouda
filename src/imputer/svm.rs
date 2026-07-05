@@ -1,15 +1,16 @@
 use crate::imputer::SimpleImputer;
 use crate::utils::{self, StringEncoding};
 use libsvm_rs::{
-    KernelType, SvmModel, SvmNode, SvmParameter, SvmParameterBuilder, SvmProblem, SvmType, train,
+    train, KernelType, SvmModel, SvmNode, SvmParameter, SvmParameterBuilder, SvmProblem, SvmType,
 };
 use ndarray::{Array2, ArrayView1, ArrayView2};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyAny, PyBytes};
 use rayon::prelude::*;
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
 
-#[pyclass]
+#[pyclass(name = "SVMImputerRS", module = "gouda.gouda")]
+#[derive(Serialize, Deserialize)]
 pub struct SVMImputer {
     models: Vec<SvmModel>,
     string_encoding: Option<StringEncoding>,
@@ -100,21 +101,6 @@ impl SVMImputer {
         }
     }
 
-    pub fn get_params(&self, py: Python) -> PyResult<Py<PyDict>> {
-        let dict = PyDict::new(py);
-
-        dict.set_item("kernel", self.kernel().to_owned())?;
-        dict.set_item(
-            "encoding",
-            match self.string_encoding {
-                None => None,
-                Some(_) => Some("label"),
-            },
-        )?;
-
-        Ok(dict.into())
-    }
-
     #[getter]
     fn kernel(&self) -> &str {
         match self.kernel {
@@ -124,6 +110,35 @@ impl SVMImputer {
             KernelType::Sigmoid => "sigmoid",
             KernelType::Precomputed => "precomputed",
         }
+    }
+
+    #[getter]
+    fn encoding(&self) -> Option<&str> {
+        match self.string_encoding {
+            None => None,
+            Some(_) => Some("label"),
+        }
+    }
+
+    fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = bincode::serialize(&self).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("failed to pickle SVMImputer: {e}"))
+        })?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    fn __setstate__(&mut self, state: &Bound<'_, PyBytes>) -> PyResult<()> {
+        let decoded: SVMImputer = bincode::deserialize(state.as_bytes()).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("failed to unpickle SVMImputer: {e}"))
+        })?;
+        self.models = decoded.models;
+        self.string_encoding = decoded.string_encoding;
+        self.is_fitted = decoded.is_fitted;
+        self._cat_cols = decoded._cat_cols;
+        self.num_cols = decoded.num_cols;
+        self.kernel = decoded.kernel;
+        self.init = decoded.init;
+        Ok(())
     }
 }
 

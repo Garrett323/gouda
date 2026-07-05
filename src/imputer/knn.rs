@@ -1,21 +1,25 @@
 use crate::utils::{self, SendPtr, StringEncoding};
 use ndarray::{Array2, ArrayView1, ArrayView2};
 use pyo3::prelude::*;
-use pyo3::types::PyAny;
+use pyo3::types::{PyAny, PyBytes};
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Serialize, Deserialize)]
 enum Weights {
     Uniform,
     Distance,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 enum Metrics {
     NanEuclid,
     ExpectedDistance,
     Gower(Option<Vec<f64>>),
 }
 
-#[pyclass]
+#[pyclass(name = "KnnImputerRS", module = "gouda.gouda")]
+#[derive(Serialize, Deserialize)]
 pub struct KnnImputer {
     #[pyo3(get, set)]
     k: usize,
@@ -36,6 +40,7 @@ impl KnnImputer {
     #[new]
     #[pyo3(signature = (k=5, metric="nan_euclid", weights="uniform", encoding=None))]
     pub fn new(k: usize, metric: &str, weights: &str, encoding: Option<&str>) -> KnnImputer {
+        println!("{:?}", encoding);
         KnnImputer {
             k,
             data: None,
@@ -82,10 +87,9 @@ impl KnnImputer {
             let (arr, _out, _enc) = utils::pyany_to_vec(data, &inner.string_encoding)?;
             utils::raise_if_nan_col(arr.view())?;
             if let Metrics::Gower(_) = inner.metric {
+                println!("{:?}", inner.string_encoding);
                 inner.metric = Metrics::Gower(Some(inner.span(arr.view())));
-                let indices = _enc
-                    .expect("Passed gower but didnt pass encoding strategy")
-                    .string_column_indices;
+                let indices = _enc.map_or(Vec::new(), |enc| enc.string_column_indices);
                 inner.num_cols = Some(
                     (0..arr.ncols())
                         .filter(|idx| !indices.contains(idx))
@@ -133,6 +137,53 @@ impl KnnImputer {
             let inner = slf.borrow_mut(py);
             inner.transform(py, data)
         }
+    }
+
+    #[getter]
+    fn encoding(&self) -> Option<&str> {
+        match self.string_encoding {
+            None => None,
+            Some(_) => Some("label"),
+        }
+    }
+
+    #[getter]
+    fn weights(&self) -> &str {
+        match self.weights {
+            Weights::Uniform => "uniform",
+            Weights::Distance => "distance",
+        }
+    }
+
+    #[getter]
+    fn metric(&self) -> &str {
+        match self.metric {
+            Metrics::NanEuclid => "nan_euclid",
+            Metrics::ExpectedDistance => "expected_distance",
+            Metrics::Gower(_) => "gower",
+        }
+    }
+
+    fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = bincode::serialize(&self).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("failed to pickle KnnImputerRS: {e}"))
+        })?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    fn __setstate__(&mut self, state: &Bound<'_, PyBytes>) -> PyResult<()> {
+        let decoded: KnnImputer = bincode::deserialize(state.as_bytes()).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("failed to unpickle KnnImputerRS: {e}"))
+        })?;
+        self.k = decoded.k;
+        self.data = decoded.data;
+        self.string_encoding = decoded.string_encoding;
+        self.cat_cols = decoded.cat_cols;
+        self.num_cols = decoded.num_cols;
+        self.is_fitted = decoded.is_fitted;
+        self.metric = decoded.metric;
+        self.weights = decoded.weights;
+        Ok(())
     }
 }
 

@@ -1,10 +1,10 @@
 import numpy as np
 import time
 from sklearn.impute import KNNImputer as SKKNN
+from sklearn.utils.estimator_checks import check_estimator
 from gouda import KnnImputer as RSKNN
 import pytest
 import pandas as pd
-
 
 @pytest.mark.heavy
 def test_time():
@@ -89,4 +89,5 @@ def test_categoricals():
         assert l == "a"
 
 
-
+def test_checksklearn():
+    check_estimator(RSKNN( k=3, encoding="label", metric="gower"))
