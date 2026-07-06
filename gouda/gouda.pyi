@@ -137,3 +137,6 @@ class MissForest:
     def fit_transform(self, data: npt.NDArray[np.float64] | pd.DataFrame) \
             -> npt.NDArray[np.float64] | pd.DataFrame:
         ...
+
+def raise_if_nan_col(data: npt.NDArray[np.float64] | pd.DataFrame) -> None:
+    ...

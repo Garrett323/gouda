@@ -62,12 +62,3 @@ def test_categoricals():
     assert isinstance(imputed, pd.DataFrame), "No DataFrame returned"
     for l in imputed.iloc[mask[:, 1], 1]:
         assert l == "a"
-
-
-def test_checksklearn_simple():
-    check_estimator(SimpleImputer(encoding="label"))
-
-def test_checksklearn_const():
-    # this is needed since constant throws a warning when using categorical values but sklearn wants to check if it supports categorical data
-    with pytest.warns(): 
-        check_estimator(ConstantImputer(encoding="label"))

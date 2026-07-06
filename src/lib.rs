@@ -17,4 +17,12 @@ mod gouda {
         module.add_class::<imputer::MissForest>()?;
         Ok(())
     }
+
+    #[pyfunction]
+    fn raise_if_nan_col(data: &Bound<'_, PyAny>) -> PyResult<()> {
+        let (arr, _out, _enc) =
+            utils::pyany_to_vec(data, &Some(utils::StringEncoding::LabelEncoding))?;
+        utils::raise_if_nan_col(arr.view())?;
+        Ok(())
+    }
 }

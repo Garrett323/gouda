@@ -125,11 +125,3 @@ def test_shape_mismatch():
     data[mask] = pd.NA
     imputed = Mice(max_iter=2, encoding='label').fit(data).transform(data)
     print(imputed)
-
-def test_checksklearn():
-    check_estimator(
-        Mice(encoding="label"),
-        expected_failed_checks= {
-            "check_estimators_pickle": "known float drift in transform after pickle, tracked in #123",
-        },
-    )

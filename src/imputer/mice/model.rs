@@ -1,4 +1,4 @@
-use super::backend::{LinearRegression, LogisticRegression, PMM, Ridge, Solver};
+use super::backend::{LinearRegression, LogisticRegression, Ridge, Solver, PMM};
 use crate::imputer::SimpleImputer;
 use crate::utils::{self, SendPtr, StringEncoding};
 use ndarray::{Array1, Array2, ArrayView2, Axis};
@@ -59,6 +59,7 @@ impl Mice {
         {
             let mut inner = slf.borrow_mut(py);
             let (arr, _out, enc) = utils::pyany_to_vec(data, &inner.string_encoding)?;
+            utils::raise_if_nan_col(arr.view())?;
             if let Some(_) = inner.string_encoding {
                 inner.cat_columns = Some(enc.map_or(Vec::new(), |e| e.string_column_indices));
             } else {

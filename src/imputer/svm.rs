@@ -1,7 +1,7 @@
 use crate::imputer::SimpleImputer;
 use crate::utils::{self, StringEncoding};
 use libsvm_rs::{
-    train, KernelType, SvmModel, SvmNode, SvmParameter, SvmParameterBuilder, SvmProblem, SvmType,
+    train, KernelType, SvmModel, SvmNode, SvmParameter, SvmParameterBuilder, SvmProblem, SvmType, set_quiet
 };
 use ndarray::{Array2, ArrayView1, ArrayView2};
 use pyo3::prelude::*;
@@ -29,6 +29,7 @@ impl SVMImputer {
     #[new]
     #[pyo3(signature = (kernel="linear", encoding=None))]
     pub fn new(kernel: &str, encoding: Option<&str>) -> SVMImputer {
+        set_quiet(true);
         // assert!(ALLOWED_WEIGHTS.contains(&weights));
         // SVMImputer::sanity_check(&metric, &weights);
         SVMImputer {

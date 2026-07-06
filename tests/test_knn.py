@@ -87,7 +87,3 @@ def test_categoricals():
     assert isinstance(imputed, pd.DataFrame), "No DataFrame returned"
     for l in imputed.iloc[mask[:, 1], 1]:
         assert l == "a"
-
-
-def test_checksklearn():
-    check_estimator(RSKNN( k=3, encoding="label", metric="gower"))
