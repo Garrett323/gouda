@@ -43,7 +43,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 from dataclasses import dataclass, field
 from sklearn.impute._base import _BaseImputer
-from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.base import TransformerMixin
 from sklearn.utils.validation import validate_data 
 from sklearn.exceptions import NotFittedError
 from gouda.gouda import raise_if_nan_col
@@ -204,41 +204,23 @@ class Discriminator(nn.Module):
 
 
 class GAIN(_BaseImputer, TransformerMixin):
-    """
-    hidden_dim      : Width of hidden layers in both G and D.
-    num_layers      : Depth of both networks (≥ 2).
-    dropout         : Dropout rate in both networks (0 = disabled).
-    hint_rate       : Fraction of mask bits revealed to discriminator (0 < p ≤ 1).
-    alpha           : Weight on the MSE reconstruction term in G's loss.
-    batch_size      : Mini-batch size.
-    max_epochs      : Maximum training epochs.
-    lr              : Initial learning rate for both G and D.
-    weight_decay    : L2 regularisation.
-    grad_clip       : Maximum gradient norm (per network).
-    label_smoothing : Label smoothing applied to discriminator targets (e.g. 0.1).
-    patience        : Early-stopping patience (epochs without joint-loss improvement).
-    min_delta       : Minimum relative improvement to reset patience counter.
-    device          : 'cpu', 'cuda', 'mps', or None (auto-detect).
-    random_state    : Integer seed for full reproducibility, or None.
-    verbose         : Print training progress every `verbose` epochs (0 = silent).
-    """
     def __init__(self, *,
-    hidden_dim: int = 256,
-    num_layers: int = 3,
-    dropout: float = 0.0,
-    hint_rate: float = 0.9,
-    alpha: float = 100.0,
-    batch_size: int = 256,
-    max_epochs: int = 300,
-    lr: float = 1e-3,
-    weight_decay: float = 1e-5,
-    grad_clip: float = 5.0,
-    label_smoothing: float = 0.1,
-    patience: int = 30,
-    min_delta: float = 1e-4,
-    device: str | None = None,
-    random_state: int | None = 42,
-    verbose: int = 0,
+    hidden_dim: int = 256,         # Width of hidden layers in both G and D.                          
+    num_layers: int = 3,           # Depth of both networks (≥ 2).                                    
+    dropout: float = 0.0,          # Dropout rate in both networks (0 = disabled).                    
+    hint_rate: float = 0.9,        # Fraction of mask bits revealed to discriminator (0 < p ≤ 1).     
+    alpha: float = 100.0,          # Weight on the MSE reconstruction term in G's loss.               
+    batch_size: int = 256,         # Mini-batch size.                                                 
+    max_epochs: int = 300,         # Maximum training epochs.                                         
+    lr: float = 1e-3,              # Initial learning rate for both G and D.                          
+    weight_decay: float = 1e-5,    # L2 regularisation.                                               
+    grad_clip: float = 5.0,        # Maximum gradient norm (per network).                             
+    label_smoothing: float = 0.1,  # Label smoothing applied to discriminator targets (e.g. 0.1).     
+    patience: int = 30,            # Early-stopping patience (epochs without joint-loss improvement). 
+    min_delta: float = 1e-4,       # Minimum relative improvement to reset patience counter.          
+    device: str | None = None,     # 'cpu', 'cuda', 'mps', or None (auto-detect).                     
+    random_state: int | None = 42, # Integer seed for full reproducibility, or None.                  
+    verbose: int = 0,              # Print training progress every `verbose` epochs (0 = silent).     
     encoding: None | str = None,
     # required by _BaseImputer
     missing_values=np.nan, 
@@ -266,6 +248,8 @@ class GAIN(_BaseImputer, TransformerMixin):
         self.missing_values= missing_values
         self.add_indicator= add_indicator
         self.keep_empty_features= keep_empty_features
+        if encoding is not None:
+            warnings.warn("Encoding Parameter is passed, but categorical handling is incomplete for [GAIN]", UserWarning)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -349,11 +333,7 @@ class GAIN(_BaseImputer, TransformerMixin):
 
         return adv_loss + alpha * mse_loss
 
-    # ------------------------------------------------------------------
-    # fit
-    # ------------------------------------------------------------------
-
-    def fit(self, X: np.ndarray, y=None) -> "GAINImputer":
+    def fit(self, X: np.ndarray, y=None) -> "GAIN":
         """
         Train GAIN on X (may contain NaNs).
 
@@ -430,7 +410,6 @@ class GAIN(_BaseImputer, TransformerMixin):
             opt_D, T_max=self.max_epochs, eta_min=self.lr * 1e-2
         )
 
-        # ---- training history & early stopping -----------------------
         hist_d: list[float] = []
         hist_g: list[float] = []
         best_joint = float("inf")
@@ -547,10 +526,6 @@ class GAIN(_BaseImputer, TransformerMixin):
         self.is_fitted_ = True
         return self
 
-    # ------------------------------------------------------------------
-    # transform
-    # ------------------------------------------------------------------
-
     def transform(self, X: np.ndarray) -> np.ndarray:
         """
         Impute missing values in X using the trained generator.
@@ -602,17 +577,9 @@ class GAIN(_BaseImputer, TransformerMixin):
 
         return X_imputed
 
-    # ------------------------------------------------------------------
-    # fit_transform (sklearn mixin pattern)
-    # ------------------------------------------------------------------
-
     def fit_transform(self, X: np.ndarray, y=None) -> np.ndarray:
         """Fit the model and return the imputed training data."""
         return self.fit(X, y).transform(X)
-
-    # ------------------------------------------------------------------
-    # sklearn get_params / set_params
-    # ------------------------------------------------------------------
 
     def get_params(self, deep: bool = True) -> dict:
         return {
@@ -647,7 +614,7 @@ class GAIN(_BaseImputer, TransformerMixin):
     def __repr__(self) -> str:  # pragma: no cover
         p = self.get_params()
         args = ", ".join(f"{k}={v!r}" for k, v in p.items())
-        return f"GAINImputer({args})"
+        return f"GAIN({args})"
 
     def __sklearn_tags__(self):
         tags = super().__sklearn_tags__()

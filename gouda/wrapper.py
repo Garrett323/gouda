@@ -8,6 +8,11 @@ from sklearn.utils import Tags
 import numpy as np
 import pandas as pd
 
+def __tags(tags):
+    tags.input_tags.allow_nan = True
+    tags.input_tags.string = True   # declares intentional string/categorical support
+    return tags
+
 
 class KnnImputer(_BaseImputer, TransformerMixin):
     def __init__(self, *, 
@@ -49,9 +54,7 @@ class KnnImputer(_BaseImputer, TransformerMixin):
         return self._model.transform(X)
 
     def __sklearn_tags__(self):
-        tags = super().__sklearn_tags__()
-        tags.input_tags.string = True   # declares intentional string/categorical support
-        return tags
+        return __tags(super().__sklearn_tags__())
 
 
 class SimpleImputer(_BaseImputer, TransformerMixin):
@@ -86,9 +89,7 @@ class SimpleImputer(_BaseImputer, TransformerMixin):
         return self._model.transform(X)
 
     def __sklearn_tags__(self):
-        tags = super().__sklearn_tags__()
-        tags.input_tags.string = True   # declares intentional string/categorical support
-        return tags
+        return __tags(super().__sklearn_tags__())
 
 
 class ConstantImputer(_BaseImputer, TransformerMixin):
@@ -125,9 +126,7 @@ class ConstantImputer(_BaseImputer, TransformerMixin):
         return self._model.transform(X)
 
     def __sklearn_tags__(self):
-        tags = super().__sklearn_tags__()
-        tags.input_tags.string = True   # declares intentional string/categorical support
-        return tags
+        return __tags(super().__sklearn_tags__())
 
 
 class SVMImputer(_BaseImputer, TransformerMixin):
@@ -164,9 +163,7 @@ class SVMImputer(_BaseImputer, TransformerMixin):
         return self._model.transform(X)
 
     def __sklearn_tags__(self):
-        tags = super().__sklearn_tags__()
-        tags.input_tags.string = True   # declares intentional string/categorical support
-        return tags
+        return __tags(super().__sklearn_tags__())
 
 
 class Mice(_BaseImputer, TransformerMixin):
@@ -216,7 +213,4 @@ class Mice(_BaseImputer, TransformerMixin):
         return self._model.transform(X)
 
     def __sklearn_tags__(self):
-        tags = super().__sklearn_tags__()
-        tags.input_tags.string = True   # declares intentional string/categorical support
-        return tags
-
+        return __tags(super().__sklearn_tags__())
