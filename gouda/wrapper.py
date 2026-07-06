@@ -8,7 +8,7 @@ from sklearn.utils import Tags
 import numpy as np
 import pandas as pd
 
-def __tags(tags):
+def imputer_tags(tags):
     tags.input_tags.allow_nan = True
     tags.input_tags.string = True   # declares intentional string/categorical support
     return tags
@@ -54,7 +54,7 @@ class KnnImputer(_BaseImputer, TransformerMixin):
         return self._model.transform(X)
 
     def __sklearn_tags__(self):
-        return __tags(super().__sklearn_tags__())
+        return imputer_tags(super().__sklearn_tags__())
 
 
 class SimpleImputer(_BaseImputer, TransformerMixin):
@@ -89,7 +89,7 @@ class SimpleImputer(_BaseImputer, TransformerMixin):
         return self._model.transform(X)
 
     def __sklearn_tags__(self):
-        return __tags(super().__sklearn_tags__())
+        return imputer_tags(super().__sklearn_tags__())
 
 
 class ConstantImputer(_BaseImputer, TransformerMixin):
@@ -126,7 +126,7 @@ class ConstantImputer(_BaseImputer, TransformerMixin):
         return self._model.transform(X)
 
     def __sklearn_tags__(self):
-        return __tags(super().__sklearn_tags__())
+        return imputer_tags(super().__sklearn_tags__())
 
 
 class SVMImputer(_BaseImputer, TransformerMixin):
@@ -163,7 +163,7 @@ class SVMImputer(_BaseImputer, TransformerMixin):
         return self._model.transform(X)
 
     def __sklearn_tags__(self):
-        return __tags(super().__sklearn_tags__())
+        return imputer_tags(super().__sklearn_tags__())
 
 
 class Mice(_BaseImputer, TransformerMixin):
@@ -213,4 +213,4 @@ class Mice(_BaseImputer, TransformerMixin):
         return self._model.transform(X)
 
     def __sklearn_tags__(self):
-        return __tags(super().__sklearn_tags__())
+        return imputer_tags(super().__sklearn_tags__())
