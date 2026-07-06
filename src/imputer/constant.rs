@@ -44,6 +44,8 @@ impl ConstantImputer {
     pub fn fit(slf: Py<Self>, py: Python<'_>, _data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
         {
             let mut inner = slf.borrow_mut(py);
+            let (arr, _, _) = pyany_to_vec(_data, &inner.string_encoding)?;
+            utils::raise_if_nan_col(arr.view())?;
             if let Some(_) = inner.string_encoding {
                 pyo3::PyErr::warn(
                     py,

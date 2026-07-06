@@ -133,3 +133,16 @@ def test_checksklearn():
             "check_estimators_pickle": "known float drift in transform after pickle, tracked in #123",
         },
     )
+
+def test_raises_on_all_nan_column():
+    """A column that is entirely missing carries no signal -- the model
+    should either raise a clear, informative error or fill with some
+    documented default, but should not silently fail/crash uninformatively."""
+    data = np.random.rand(500, 5)
+    data[:, 0] = np.nan
+    model = Mice()
+    try:
+        out = model.fit_transform(data)
+        assert not np.isnan(out).any()
+    except ValueError:
+        pass  # acceptable: explicit, informative failure

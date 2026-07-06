@@ -1,4 +1,4 @@
-use crate::utils::{StringEncoding, arr_to_out, constants::NOT_FITTED_ERR, pyany_to_vec};
+use crate::utils::{self, StringEncoding, arr_to_out, constants::NOT_FITTED_ERR, pyany_to_vec};
 use ndarray::{Array2, ArrayView2};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes};
@@ -35,6 +35,7 @@ impl SimpleImputer {
         {
             let mut inner = slf.borrow_mut(py);
             let (arr, _out, _enc) = pyany_to_vec(data, &inner.string_encoding)?;
+            utils::raise_if_nan_col(arr.view())?;
             let ids = _enc.as_ref().map(|enc| &enc.string_column_indices);
             inner.fit_impl(arr.view(), ids);
             inner.is_fitted = true;
