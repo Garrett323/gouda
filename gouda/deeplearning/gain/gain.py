@@ -46,6 +46,7 @@ from sklearn.impute._base import _BaseImputer
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import validate_data 
 from sklearn.exceptions import NotFittedError
+from gouda.gouda import raise_if_nan_col
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +368,7 @@ class GAIN(_BaseImputer, TransformerMixin):
         """
         X = validate_data(self, X, dtype=None, ensure_all_finite="allow-nan")  
         X = np.array(X, dtype=np.float64)
+        raise_if_nan_col(X)
         if X.ndim != 2:
             raise ValueError("X must be 2-D.")
 
