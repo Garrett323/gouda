@@ -1,6 +1,6 @@
 use crate::utils::{
     self, StringEncoding,
-    constants::{ENCODING_WARN, NOT_FITTED_ERR},
+    constants::{NOT_FITTED_ERR, encoding_warn},
     pyany_to_vec,
 };
 use ndarray::Array2;
@@ -50,7 +50,7 @@ impl ConstantImputer {
                 pyo3::PyErr::warn(
                     py,
                     &py.get_type::<pyo3::exceptions::PyUserWarning>(),
-                    ENCODING_WARN,
+                    &encoding_warn("ConstantImputer"),
                     1,
                 )?;
             };

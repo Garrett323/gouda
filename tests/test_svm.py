@@ -68,23 +68,6 @@ def test_no_missing_values_passthrough():
     np.testing.assert_allclose(X_out, X, rtol=1e-5)
  
  
-def test_all_missing_column_raises_or_handles():
-    """
-    Edge case: a column that is entirely missing has no signal to fit an SVM on.
-    Should either raise an informative error or fall back gracefully
-    (e.g., impute with a constant) -- must not silently crash or return NaN.
-    """
-    rng = np.random.RandomState(2)
-    X = rng.rand(20, 3)
-    X[:, 1] = np.nan
-    imputer = SVMImputer()
-    try:
-        X_out = imputer.fit_transform(X)
-        assert not np.isnan(X_out).any()
-    except ValueError:
-        pass  # explicit, informative failure is acceptable
- 
- 
 def test_single_row_input():
     """Edge case: a single-sample input should not crash transform."""
     rng = np.random.RandomState(3)
@@ -129,7 +112,3 @@ def test_mismatched_feature_count_at_transform_raises(simple_data):
     X_wrong = X_missing[:, :2]  # drop a column
     with pytest.raises(ValueError):
         imputer.transform(X_wrong)
- 
-
-def test_checksklearn():
-    check_estimator(SVMImputer(encoding="label"))

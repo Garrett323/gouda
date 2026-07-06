@@ -40,7 +40,6 @@ impl KnnImputer {
     #[new]
     #[pyo3(signature = (k=5, metric="nan_euclid", weights="uniform", encoding=None))]
     pub fn new(k: usize, metric: &str, weights: &str, encoding: Option<&str>) -> KnnImputer {
-        println!("{:?}", encoding);
         KnnImputer {
             k,
             data: None,
@@ -87,7 +86,6 @@ impl KnnImputer {
             let (arr, _out, _enc) = utils::pyany_to_vec(data, &inner.string_encoding)?;
             utils::raise_if_nan_col(arr.view())?;
             if let Metrics::Gower(_) = inner.metric {
-                println!("{:?}", inner.string_encoding);
                 inner.metric = Metrics::Gower(Some(inner.span(arr.view())));
                 let indices = _enc.map_or(Vec::new(), |enc| enc.string_column_indices);
                 inner.num_cols = Some(

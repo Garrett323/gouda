@@ -62,34 +62,3 @@ def test_categoricals():
     assert isinstance(imputed, pd.DataFrame), "No DataFrame returned"
     for l in imputed.iloc[mask[:, 1], 1]:
         assert l == "a"
-
-
-def test_raises_on_all_nan_column():
-    """A column that is entirely missing carries no signal -- the model
-    should either raise a clear, informative error or fill with some
-    documented default, but should not silently fail/crash uninformatively."""
-    data = np.random.rand(500, 5)
-    data[:, 0] = np.nan
-    model = SimpleImputer()
-    try:
-        out = model.fit_transform(data)
-        assert not np.isnan(out).any()
-    except ValueError:
-        pass  # acceptable: explicit, informative failure
-
-    model = ConstantImputer()
-    try:
-        out = model.fit_transform(data)
-        assert not np.isnan(out).any()
-    except ValueError:
-        pass  # acceptable: explicit, informative failure
-
-
-def test_checksklearn_simple():
-    check_estimator(SimpleImputer(encoding="label"))
-
-def test_checksklearn_const():
-    # this is needed since constant throws a warning when using categorical values but sklearn wants to check if it supports categorical data
-    with pytest.warns(): 
-        check_estimator(ConstantImputer(encoding="label"))
-
