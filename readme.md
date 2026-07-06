@@ -36,6 +36,7 @@ X_imputed = imputer.fit_transform(X)
 - `SimpleImputer`
 - `ConstantImputer`
 - `SVMImputer`
+- `GAIN`
 
 ## Why Gouda?
 
