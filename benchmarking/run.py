@@ -150,6 +150,10 @@ def get_model(model):
             return Mice
         case "knn":
             return KnnImputer
+        case "svm":
+            return SVMImputer
+        case "gain":
+            return GAIN
         case "knn-sk":
             return KNNsk
         case "simple":

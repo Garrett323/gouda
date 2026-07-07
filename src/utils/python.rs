@@ -64,7 +64,7 @@ pub fn pyany_to_vec(
 ) -> PyResult<(Array2<f64>, OUT, Option<EncodingInfo>)> {
     let typ = obj.get_type().name()?;
     let out = match typ.to_string().as_str() {
-        "ndarray" => OUT::Numpy,
+        "ndarray" | "memmap" => OUT::Numpy,
         "DataFrame" => {
             let columns = obj.getattr("columns")?;
             let columns: Vec<String> = match columns.extract::<Vec<String>>() {
