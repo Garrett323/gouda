@@ -1,7 +1,8 @@
 use crate::imputer::SimpleImputer;
 use crate::utils::{self, StringEncoding};
 use libsvm_rs::{
-    train, KernelType, SvmModel, SvmNode, SvmParameter, SvmParameterBuilder, SvmProblem, SvmType, set_quiet
+    KernelType, SvmModel, SvmNode, SvmParameter, SvmParameterBuilder, SvmProblem, SvmType,
+    set_quiet, train,
 };
 use ndarray::{Array2, ArrayView1, ArrayView2};
 use pyo3::prelude::*;
@@ -255,7 +256,12 @@ fn create_problem(
         })
         .collect();
     SvmProblem {
-        labels: target_column.1.to_vec(),
+        labels: target_column
+            .1
+            .iter()
+            .filter(|&v| !v.is_nan())
+            .copied()
+            .collect(),
         instances,
     }
 }

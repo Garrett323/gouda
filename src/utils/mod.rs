@@ -2,6 +2,7 @@ use ndarray::ArrayView2;
 use rayon::prelude::*;
 pub mod constants;
 mod python;
+use std::collections::HashMap;
 
 pub struct SendPtr(pub *mut f64);
 unsafe impl Send for SendPtr {}
@@ -27,4 +28,32 @@ pub fn all_empty_column(arr: ArrayView2<f64>) -> Result<(), Vec<usize>> {
     } else {
         Err(all_nan_cols)
     }
+}
+
+pub fn label_encode(values: &[String]) -> (Vec<f64>, HashMap<String, Option<u64>>) {
+    // Collect unique labels in sorted order.
+    let mut unique: Vec<&str> = values.iter().map(String::as_str).collect();
+    unique.par_sort_unstable();
+    unique.dedup();
+    let mut counter = 0;
+    let map: HashMap<String, Option<u64>> = unique
+        .iter()
+        .map(|&s| match s {
+            "nan" | "NaN" | "<NA>" => (s.to_owned(), None),
+            _ => (s.to_owned(), {
+                let e = Some(counter);
+                counter += 1;
+                e
+            }),
+        })
+        .collect();
+
+    let encoded: Vec<f64> = values
+        .par_iter()
+        .map(|s| match map[s] {
+            None => f64::NAN,
+            Some(x) => x as f64,
+        })
+        .collect();
+    (encoded, map)
 }

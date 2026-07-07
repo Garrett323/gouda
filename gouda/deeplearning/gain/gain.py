@@ -44,7 +44,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from dataclasses import dataclass, field
 from sklearn.impute._base import _BaseImputer
 from sklearn.base import TransformerMixin
-from sklearn.utils.validation import validate_data 
+from sklearn.utils.validation import validate_data
 from sklearn.exceptions import NotFittedError
 from gouda.gouda import raise_if_nan_col
 
@@ -92,13 +92,15 @@ class Generator(nn.Module):
         layers: list[nn.Module] = []
 
         # Input block
-        layers += [nn.Linear(dim * 2, hidden_dim), nn.LayerNorm(hidden_dim), nn.ReLU()]
+        layers += [nn.Linear(dim * 2, hidden_dim),
+                   nn.LayerNorm(hidden_dim), nn.ReLU()]
         if dropout > 0:
             layers.append(nn.Dropout(dropout))
 
         # Hidden blocks
         for _ in range(num_layers - 2):
-            layers += [nn.Linear(hidden_dim, hidden_dim), nn.LayerNorm(hidden_dim), nn.ReLU()]
+            layers += [nn.Linear(hidden_dim, hidden_dim),
+                       nn.LayerNorm(hidden_dim), nn.ReLU()]
             if dropout > 0:
                 layers.append(nn.Dropout(dropout))
 
@@ -202,54 +204,66 @@ class Discriminator(nn.Module):
         return self.net(inp)
 
 
-
 class GAIN(_BaseImputer, TransformerMixin):
     def __init__(self, *,
-    hidden_dim: int = 256,         # Width of hidden layers in both G and D.                          
-    num_layers: int = 3,           # Depth of both networks (≥ 2).                                    
-    dropout: float = 0.0,          # Dropout rate in both networks (0 = disabled).                    
-    hint_rate: float = 0.9,        # Fraction of mask bits revealed to discriminator (0 < p ≤ 1).     
-    alpha: float = 100.0,          # Weight on the MSE reconstruction term in G's loss.               
-    batch_size: int = 256,         # Mini-batch size.                                                 
-    max_epochs: int = 300,         # Maximum training epochs.                                         
-    lr: float = 1e-3,              # Initial learning rate for both G and D.                          
-    weight_decay: float = 1e-5,    # L2 regularisation.                                               
-    grad_clip: float = 5.0,        # Maximum gradient norm (per network).                             
-    label_smoothing: float = 0.1,  # Label smoothing applied to discriminator targets (e.g. 0.1).     
-    patience: int = 30,            # Early-stopping patience (epochs without joint-loss improvement). 
-    min_delta: float = 1e-4,       # Minimum relative improvement to reset patience counter.          
-    device: str | None = None,     # 'cpu', 'cuda', 'mps', or None (auto-detect).                     
-    random_state: int | None = 42, # Integer seed for full reproducibility, or None.                  
-    verbose: int = 0,              # Print training progress every `verbose` epochs (0 = silent).     
-    encoding: None | str = None,
-    # required by _BaseImputer
-    missing_values=np.nan, 
-    add_indicator: bool = False, 
-    keep_empty_features: bool = False,) -> None:
+                 # Width of hidden layers in both G and D.
+                 hidden_dim: int = 256,
+                 num_layers: int = 3,           # Depth of both networks (≥ 2).
+                 # Dropout rate in both networks (0 = disabled).
+                 dropout: float = 0.0,
+                 # Fraction of mask bits revealed to discriminator (0 < p ≤ 1).
+                 hint_rate: float = 0.9,
+                 # Weight on the MSE reconstruction term in G's loss.
+                 alpha: float = 100.0,
+                 batch_size: int = 256,         # Mini-batch size.
+                 max_epochs: int = 300,         # Maximum training epochs.
+                 # Initial learning rate for both G and D.
+                 lr: float = 1e-3,
+                 weight_decay: float = 1e-5,    # L2 regularisation.
+                 # Maximum gradient norm (per network).
+                 grad_clip: float = 5.0,
+                 # Label smoothing applied to discriminator targets (e.g. 0.1).
+                 label_smoothing: float = 0.1,
+                 # Early-stopping patience (epochs without joint-loss improvement).
+                 patience: int = 30,
+                 # Minimum relative improvement to reset patience counter.
+                 min_delta: float = 1e-4,
+                 # 'cpu', 'cuda', 'mps', or None (auto-detect).
+                 device: str | None = None,
+                 # Integer seed for full reproducibility, or None.
+                 random_state: int | None = 42,
+                 # Print training progress every `verbose` epochs (0 = silent).
+                 verbose: int = 0,
+                 encoding: None | str = None,
+                 # required by _BaseImputer
+                 missing_values=np.nan,
+                 add_indicator: bool = False,
+                 keep_empty_features: bool = False,) -> None:
 
-        self.hidden_dim= hidden_dim
-        self.num_layers= num_layers
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
         self.dropout = dropout
-        self.hint_rate= hint_rate
-        self.alpha= alpha
-        self.batch_size= batch_size
-        self.max_epochs= max_epochs
-        self.lr= lr
-        self.weight_decay= weight_decay
-        self.grad_clip= grad_clip
-        self.label_smoothing= label_smoothing
-        self.patience= patience
-        self.min_delta= min_delta
-        self.device= device
-        self.random_state= random_state
-        self.verbose= verbose
-        self.device= device
-        self.encoding= encoding
-        self.missing_values= missing_values
-        self.add_indicator= add_indicator
-        self.keep_empty_features= keep_empty_features
+        self.hint_rate = hint_rate
+        self.alpha = alpha
+        self.batch_size = batch_size
+        self.max_epochs = max_epochs
+        self.lr = lr
+        self.weight_decay = weight_decay
+        self.grad_clip = grad_clip
+        self.label_smoothing = label_smoothing
+        self.patience = patience
+        self.min_delta = min_delta
+        self.device = device
+        self.random_state = random_state
+        self.verbose = verbose
+        self.device = device
+        self.encoding = encoding
+        self.missing_values = missing_values
+        self.add_indicator = add_indicator
+        self.keep_empty_features = keep_empty_features
         if encoding is not None:
-            warnings.warn("Encoding Parameter is passed, but categorical handling is incomplete for [GAIN]", UserWarning)
+            warnings.warn(
+                "Encoding Parameter is passed, but categorical handling is incomplete for [GAIN]", UserWarning)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -291,7 +305,8 @@ class GAIN(_BaseImputer, TransformerMixin):
         otherwise set to 0.5 (uninformative).
         """
         hint_mask = (
-            torch.bernoulli(torch.full_like(mask, self.hint_rate)).to(mask.device)
+            torch.bernoulli(torch.full_like(
+                mask, self.hint_rate)).to(mask.device)
         )
         return mask * hint_mask + 0.5 * (1.0 - hint_mask)
 
@@ -325,7 +340,8 @@ class GAIN(_BaseImputer, TransformerMixin):
         # Adversarial: want discriminator to output 1 on missing positions
         missing_mask = 1.0 - mask
         n_missing = missing_mask.sum().clamp(min=1.0)
-        adv_loss = -((torch.log(d_out + 1e-8)) * missing_mask).sum() / n_missing
+        adv_loss = -((torch.log(d_out + 1e-8)) *
+                     missing_mask).sum() / n_missing
 
         # Reconstruction: penalise deviation from known values on observed entries
         n_observed = mask.sum().clamp(min=1.0)
@@ -346,7 +362,7 @@ class GAIN(_BaseImputer, TransformerMixin):
         -------
         self
         """
-        X = validate_data(self, X, dtype=None, ensure_all_finite="allow-nan")  
+        X = validate_data(self, X, dtype=None, ensure_all_finite="allow-nan")
         X = np.array(X, dtype=np.float64)
         raise_if_nan_col(X)
         if X.ndim != 2:
@@ -354,8 +370,8 @@ class GAIN(_BaseImputer, TransformerMixin):
 
         n_samples, dim = X.shape
         if n_samples < 2:
-            raise ValueError(f"n_samples = {n_samples}, GAIN requires at least 2 samples to fit.")
-
+            raise ValueError(
+                f"n_samples = {n_samples}, GAIN requires at least 2 samples to fit.")
 
         # ---- reproducibility -----------------------------------------
         if self.random_state is not None:
@@ -370,18 +386,18 @@ class GAIN(_BaseImputer, TransformerMixin):
         self._data_max = np.nanmax(X, axis=0)
 
         mask_np = self._make_mask(X)            # (N, dim) float32
-        X_norm  = self._normalise(X).astype(np.float32)
+        X_norm = self._normalise(X).astype(np.float32)
         # Replace NaNs with 0 in normalised array (masked out in losses)
-        X_fill  = np.where(mask_np == 1, X_norm, 0.0).astype(np.float32)
+        X_fill = np.where(mask_np == 1, X_norm, 0.0).astype(np.float32)
 
-        X_t    = torch.from_numpy(X_fill).to(self._device)
+        X_t = torch.from_numpy(X_fill).to(self._device)
         mask_t = torch.from_numpy(mask_np).to(self._device)
         X_norm_t = torch.from_numpy(
             np.where(mask_np == 1, X_norm, 0.0).astype(np.float32)
         ).to(self._device)
 
-        dataset    = TensorDataset(X_t, mask_t, X_norm_t)
-        loader     = DataLoader(
+        dataset = TensorDataset(X_t, mask_t, X_norm_t)
+        loader = DataLoader(
             dataset,
             batch_size=min(self.batch_size, n_samples),
             shuffle=True,
@@ -389,7 +405,7 @@ class GAIN(_BaseImputer, TransformerMixin):
         )
 
         # ---- build networks ------------------------------------------
-        self.generator_     = Generator(
+        self.generator_ = Generator(
             dim, self.hidden_dim, self.num_layers, self.dropout
         ).to(self._device)
         self.discriminator_ = Discriminator(
@@ -463,7 +479,8 @@ class GAIN(_BaseImputer, TransformerMixin):
                 # Re-forward discriminator with grad only for G's adv loss
                 # (we need d_out to have grad w.r.t. g_out)
                 d_out_g = self.discriminator_(x_hat, hint)
-                loss_G = self._gen_loss(d_out_g, m_batch, g_out, xn_batch, self.alpha)
+                loss_G = self._gen_loss(
+                    d_out_g, m_batch, g_out, xn_batch, self.alpha)
 
                 opt_G.zero_grad()
                 loss_G.backward()
@@ -545,7 +562,8 @@ class GAIN(_BaseImputer, TransformerMixin):
         if self.generator_ is None:
             raise RuntimeError("Call fit() before transform().")
 
-        X = validate_data(self, X, dtype=None, ensure_all_finite="allow-nan", reset=False)
+        X = validate_data(self, X, dtype=None,
+                          ensure_all_finite="allow-nan", reset=False)
         X = np.array(X, dtype=np.float64)
         if X.ndim != 2:
             raise ValueError("X must be 2-D.")
@@ -555,10 +573,10 @@ class GAIN(_BaseImputer, TransformerMixin):
             )
 
         mask_np = self._make_mask(X)
-        X_norm  = self._normalise(X).astype(np.float32)
-        X_fill  = np.where(mask_np == 1, X_norm, 0.0).astype(np.float32)
+        X_norm = self._normalise(X).astype(np.float32)
+        X_fill = np.where(mask_np == 1, X_norm, 0.0).astype(np.float32)
 
-        X_t    = torch.from_numpy(X_fill).to(self._device)
+        X_t = torch.from_numpy(X_fill).to(self._device)
         mask_t = torch.from_numpy(mask_np.astype(np.float32)).to(self._device)
 
         self.generator_.eval()
@@ -619,4 +637,5 @@ class GAIN(_BaseImputer, TransformerMixin):
     def __sklearn_tags__(self):
         tags = super().__sklearn_tags__()
         tags.input_tags.allow_nan = True
+        tags.input_tags.string = True   # declares intentional string/categorical support
         return tags

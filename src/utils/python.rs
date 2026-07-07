@@ -1,7 +1,11 @@
+use crate::utils::SendPtr;
+
+use super::label_encode;
 use ndarray::{Array2, ArrayView2};
 use numpy::{PyArrayMethods, ToPyArray};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyString};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -52,34 +56,6 @@ pub fn check_feature_mismatch(expected: usize, actual: usize) -> Result<(), PyEr
         )));
     }
     Ok(())
-}
-
-fn label_encode(values: &[String]) -> (Vec<f64>, HashMap<String, Option<u64>>) {
-    // Collect unique labels in sorted order.
-    let mut unique: Vec<&str> = values.iter().map(String::as_str).collect();
-    unique.sort_unstable();
-    unique.dedup();
-    let mut counter = 0;
-    let map: HashMap<String, Option<u64>> = unique
-        .iter()
-        .map(|&s| match s {
-            "nan" | "NaN" | "<NA>" => (s.to_owned(), None),
-            _ => (s.to_owned(), {
-                let e = Some(counter);
-                counter += 1;
-                e
-            }),
-        })
-        .collect();
-
-    let encoded: Vec<f64> = values
-        .iter()
-        .map(|s| match map[s] {
-            None => f64::NAN,
-            Some(x) => x as f64,
-        })
-        .collect();
-    (encoded, map)
 }
 
 pub fn pyany_to_vec(
@@ -135,6 +111,7 @@ fn encode_object_array(
 ) -> (Array2<f64>, EncodingInfo) {
     let (nrows, ncols) = arr.getattr("shape").unwrap().extract().unwrap();
     let mut data = vec![0f64; nrows * ncols];
+    let ptr = std::sync::Arc::new(SendPtr(data.as_mut_ptr()));
     let mut string_column_indices: Vec<usize> = Vec::new();
     let mut label_maps = HashMap::new();
     let mut reverse_maps: HashMap<usize, HashMap<u64, String>> = HashMap::new();
@@ -148,7 +125,6 @@ fn encode_object_array(
 
     for col_idx in 0..ncols {
         let mut numeric: Vec<f64> = Vec::with_capacity(nrows);
-        // `strings` is only populated once a non-numeric element is found.
         let mut strings: Vec<String> = Vec::new();
         let mut is_string_col = false;
 
@@ -174,21 +150,28 @@ fn encode_object_array(
             let (encoded, map) = match enc {
                 StringEncoding::LabelEncoding => label_encode(&strings),
             };
-            for (row_idx, val) in encoded.into_iter().enumerate() {
-                data[row_idx * ncols + col_idx] = val;
-            }
+            // for (row_idx, val) in
+            encoded
+                .into_par_iter()
+                .enumerate()
+                .for_each(|(row_idx, val)| unsafe {
+                    *ptr.0.add(row_idx * ncols + col_idx) = val;
+                });
             string_column_indices.push(col_idx);
             let reverse: HashMap<u64, String> = map
-                .iter()
+                .par_iter()
                 .filter_map(|(k, v)| v.map(|val| (val, k.clone())))
                 .collect();
             label_maps.insert(col_idx, map);
             reverse_maps.insert(col_idx, reverse);
         } else {
             // Purely numeric column — write collected values directly.
-            for (row_idx, val) in numeric.into_iter().enumerate() {
-                data[row_idx * ncols + col_idx] = val;
-            }
+            numeric
+                .into_par_iter()
+                .enumerate()
+                .for_each(|(row_idx, val)| unsafe {
+                    *ptr.0.add(row_idx * ncols + col_idx) = val;
+                });
         }
     }
 

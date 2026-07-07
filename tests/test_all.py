@@ -3,36 +3,30 @@ from sklearn.utils.estimator_checks import check_estimator
 import pandas as pd
 import numpy as np
 import pytest
+from tests.utily import missing_data, missing_cat_data, missing_mixed_data
 
 param = {
     "KnnImputer": {
-        "encoding":"label",
-        "metric":"gower",
+        "encoding": "label",
+        "metric": "gower",
     },
     "SimpleImputer": {
-        "encoding":"label",
+        "encoding": "label",
     },
     "Mice": {
-        "encoding":"label",
+        "encoding": "label",
     },
     "SVMImputer": {
-        "encoding":"label",
+        "encoding": "label",
     },
     "ConstantImputer": {
-        "encoding":"label",
+        "encoding": "label",
     },
     "GAIN": {
-        "encoding":None,
+        "encoding": None,
     },
 }
 
-@pytest.fixture
-def missing_data():
-    missing_rate = 0.3
-    data = np.random.rand(500, 5)
-    missing_data = data.copy()
-    missing_data[data < missing_rate] = np.nan
-    return data, missing_data, data < missing_rate
 
 @pytest.mark.parametrize("model", Imputers)
 def test_raises_on_all_nan_column(model):
@@ -48,21 +42,25 @@ def test_raises_on_all_nan_column(model):
     except ValueError:
         pass  # acceptable: explicit, informative failure
 
-@pytest.mark.parametrize("model", Imputers)
-def test_checksklearn(model):
-    m = model(**param[model.__name__])
-    if model.__name__ == "Mice":
-        check_estimator(
-            m,
-            expected_failed_checks= {
-            "check_estimators_pickle": "known float drift in transform after pickle, tracked in #123",
-            },
-        )
-    elif model.__name__ == "ConstantImputer":
-        with pytest.warns(UserWarning):
-            check_estimator(m)
-    else:
-        check_estimator(m)
+
+class TestInputValidity:
+    @pytest.mark.parametrize("model", Imputers)
+    def test_works_with_cat(self, missing_cat_data, model):
+        data, missing, _ = missing_cat_data
+        imputed = model(**param[model.__name__]
+                        ).fit(missing).transform(missing)
+        print("data:\n", data)
+        print(f"imputed:\n{imputed}")
+        assert not imputed.isna().any().any(), "Imputed still has missing values"
+
+    @pytest.mark.parametrize("model", Imputers)
+    def test_works_with_mixed(self, missing_mixed_data, model):
+        data, missing, _ = missing_mixed_data
+        imputed = model(**param[model.__name__]
+                        ).fit(missing).transform(missing)
+        print("data:\n", data)
+        print(f"imputed:\n{imputed}")
+        assert not imputed.isna().any().any(), "Imputed still has missing values"
 
 
 class TestOutputValidity:
@@ -79,13 +77,29 @@ class TestOutputValidity:
         """A well-behaved imputer should not alter values that were already
         observed — only fill in the missing ones."""
         X_full, X_missing, mask = missing_data
-        m= model()
+        m = model()
         out = m.fit_transform(X_missing)
         observed = ~mask
         np.testing.assert_allclose(
             out[observed], X_full[observed], rtol=1e-5, atol=1e-5,
             err_msg="Imputer modified originally-observed (non-missing) values",
         )
+
+    @pytest.mark.parametrize("model", Imputers)
+    def test_cat_correct_values(self, missing_cat_data, model):
+        data, missing, _ = missing_cat_data
+        imputed = model(**param[model.__name__]
+                        ).fit(missing).transform(missing)
+        print("data", data.iloc[:20])
+        print("imputed", imputed[:20])
+        assert isinstance(imputed, pd.DataFrame), "No DataFrame returned"
+        d = {
+            col: set(data[col].dropna().unique()) == set(
+                missing[col].dropna().unique())
+            for col in data.columns.intersection(missing.columns)
+        }
+        for key, b in d.items():
+            assert b, f"value mismatch in {key}"
 
     @pytest.mark.parametrize("model", Imputers)
     def test_output_is_finite(self, missing_data, model):
@@ -112,7 +126,8 @@ class TestOutputValidity:
     @pytest.mark.parametrize("model", Imputers)
     def test_accepts_pandas_dataframe(self, missing_data, model):
         _, X_missing, _ = missing_data
-        df = pd.DataFrame(X_missing, columns=[f"f{i}" for i in range(X_missing.shape[1])])
+        df = pd.DataFrame(X_missing, columns=[
+                          f"f{i}" for i in range(X_missing.shape[1])])
         m = model(**param[model.__name__])
         if model.__name__ == "ConstantImputer":
             with pytest.warns(UserWarning):
@@ -121,3 +136,19 @@ class TestOutputValidity:
             out = m.fit_transform(df)
         assert not np.isnan(np.asarray(out)).any()
 
+
+@pytest.mark.parametrize("model", Imputers)
+def test_checksklearn(model):
+    m = model(**param[model.__name__])
+    if model.__name__ == "Mice":
+        check_estimator(
+            m,
+            expected_failed_checks={
+                "check_estimators_pickle": "known float drift in transform after pickle, tracked in #123",
+            },
+        )
+    elif model.__name__ == "ConstantImputer":
+        with pytest.warns(UserWarning):
+            check_estimator(m)
+    else:
+        check_estimator(m)
