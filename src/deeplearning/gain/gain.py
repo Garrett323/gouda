@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import pandas as pd
 from dataclasses import dataclass, field
+from sklearn.impute._base import _BaseImputer
+from sklearn.base import TransformerMixin
 
 
 class Generator(nn.Module):
