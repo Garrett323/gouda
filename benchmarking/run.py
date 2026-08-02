@@ -71,31 +71,33 @@ class Experiment:
 
     def compute_error(self, ground_truth, imputed) -> float:
         if self.only_num:
-            min = ground_truth.min()
-            max = ground_truth.max()
-            gt = (ground_truth - min) / max
+            col_min = ground_truth.min()
+            col_max = ground_truth.max()
+            gt = (ground_truth - col_min) / (col_max - col_min)
             imputed = pd.DataFrame(imputed, columns=gt.columns, index=gt.index)
-            imputed = (imputed - imputed.min()) / imputed.max()
-            nmse_error = ((gt - imputed) ** 2).sum().sum()
+            imputed = (imputed - col_min) / (col_max - col_min)
+            nmse_error = ((gt - imputed) ** 2).mean().mean()
             return nmse_error
+
         if not self.num_cols.empty:
             # compute numerical error
             num_gt = ground_truth[self.num_cols]
             num_imputed = imputed[self.num_cols]
             # range normalize
-            min = num_gt.min()
-            max = num_gt.max()
-            num_gt = (num_gt - min) / max
-            num_imputed = (num_imputed - min) / max
-            nmse_error = ((num_gt - num_imputed) ** 2).sum().sum()
+            col_min = num_gt.min()
+            col_max = num_gt.max()
+            num_gt = (num_gt - col_min) / (col_max - col_min)
+            num_imputed = (num_imputed - col_min) / (col_max - col_min)
+            nmse_error = ((num_gt - num_imputed) ** 2).mean().mean()
         else:
             nmse_error = 0.0
+
         if not self.cat_cols.empty:
             # compute categorical error
             cat_gt = ground_truth[self.cat_cols]
             cat_imputed = imputed[self.cat_cols]
             mask = cat_gt == cat_imputed
-            cat_error = 1.0 - (mask.sum().sum() / mask.shape[0])
+            cat_error = 1.0 - (mask.sum().sum() / mask.size)
         else:
             cat_error = 0.0
 
