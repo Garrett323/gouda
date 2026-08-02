@@ -210,13 +210,15 @@ impl KnnImputer {
                 })
                 .collect();
             let mut indices: Vec<_> = (0..data.nrows()).collect();
-            indices.par_sort_unstable_by(|&a, &b| distances[a].total_cmp(&distances[b]));
+            indices.par_sort_unstable_by(|&a, &b| unsafe {
+                distances
+                    .get_unchecked(a)
+                    .total_cmp(&distances.get_unchecked(b))
+            });
             let avgs = self.average(&indices, &cols, &self.get_weights(&distances));
-            let ptr = std::sync::Arc::clone(&imp_ptr);
             for (avg, c) in avgs.into_iter().zip(&cols) {
-                // imputed[row * base.ncols() + c] = avg;
                 unsafe {
-                    *ptr.0.add(row * base.ncols() + c) = avg;
+                    *imp_ptr.0.add(row * base.ncols() + c) = avg;
                 }
             }
         });
@@ -229,11 +231,11 @@ impl KnnImputer {
             let mut count = 0;
             let mut avg = 0.0;
             for i in indices {
-                let val = base.row(*i)[*c];
+                let val = unsafe { *base.row(*i).uget(*c) };
                 if val.is_nan() {
                     continue;
                 }
-                avg += val * weights[*i];
+                avg += val * unsafe { weights.get_unchecked(*i) };
                 count += 1;
                 if count >= self.k {
                     break;
@@ -282,7 +284,7 @@ impl KnnImputer {
         let mut valid = 0;
         let ncols = a.len();
         for i in 0..ncols {
-            let (x, y) = (a[i], b[i]);
+            let (x, y) = unsafe { (a.uget(i), b.uget(i)) };
             if !(x.is_nan() || y.is_nan()) {
                 let d = x - y;
                 total += d * d;
@@ -300,7 +302,7 @@ impl KnnImputer {
         let mut total_obs = 0.0;
         let ncols = a.len();
         for i in 0..ncols {
-            let (x, y) = (a[i], b[i]);
+            let (x, y) = unsafe { (a.uget(i), b.uget(i)) };
             match (x.is_nan(), y.is_nan()) {
                 (true, true) => total += 0.333,
                 (true, false) => total += y.max(1.0 - y),
@@ -323,13 +325,19 @@ impl KnnImputer {
         let mut total = 0.0;
         let mut valid = 0;
         for &i in self.cat_cols.as_ref().unwrap() {
-            if !(a[i].is_nan() || b[i].is_nan()) {
-                total += (a[i] - b[i]).abs().min(1.0);
+            let (x, y) = unsafe { (a.uget(i), b.uget(i)) };
+            if !(x.is_nan() || y.is_nan()) {
+                total += (x - y).abs().min(1.0);
                 valid += 1;
             }
         }
         for &i in self.num_cols.as_ref().unwrap() {
-            let (x, y) = (a[i] / ranges[i], b[i] / ranges[i]);
+            let (x, y) = unsafe {
+                (
+                    a.uget(i) / ranges.get_unchecked(i),
+                    b.uget(i) / ranges.get_unchecked(i),
+                )
+            };
             if !(x.is_nan() || y.is_nan()) {
                 total += (x - y).abs();
                 valid += 1;
