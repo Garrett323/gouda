@@ -2,7 +2,7 @@ use crate::utils::SendPtr;
 
 use super::label_encode;
 use ndarray::{Array2, ArrayView2};
-use numpy::{PyArrayMethods, ToPyArray};
+use numpy::{PyArray2, PyArrayMethods, PyReadonlyArray2, ToPyArray};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyString};
 use rayon::prelude::*;
@@ -122,6 +122,11 @@ fn encode_object_array(
     } else {
         arr
     };
+    let array = values.downcast::<PyArray2<PyAny>>().unwrap();
+    let readonly: PyReadonlyArray2<PyAny> = array.readonly();
+    let base = readonly.as_array();
+    let (nrows, ncols) = base.dim();
+    let mut output = Array2::<f64>::zeros((nrows, ncols));
 
     for col_idx in 0..ncols {
         let mut numeric: Vec<f64> = Vec::with_capacity(nrows);
@@ -167,9 +172,9 @@ fn encode_object_array(
         } else {
             // Purely numeric column — write collected values directly.
             numeric
-                .into_par_iter()
+                .par_iter()
                 .enumerate()
-                .for_each(|(row_idx, val)| unsafe {
+                .for_each(|(row_idx, &val)| unsafe {
                     *ptr.0.add(row_idx * ncols + col_idx) = val;
                 });
         }

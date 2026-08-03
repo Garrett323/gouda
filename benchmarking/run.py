@@ -1,4 +1,5 @@
 import yaml
+import numpy as np
 import os
 import pandas as pd
 import argparse
@@ -37,25 +38,22 @@ class Experiment:
             error[self.current_dataset] = {}
             times[self.current_dataset] = {}
             for p in self.params["missing_rates"]:
-                error[self.current_dataset][p] = 0.0
-                times[self.current_dataset][p] = {
-                    "fit": 0.0, "impute": 0.0, "total": 0.0}
+                # error[self.current_dataset][p] = 0.0
+                # times[self.current_dataset][p] = {
+                #     "fit": 0.0, "impute": 0.0, "total": 0.0}
+                errors = []
+                fits = []
+                imputes = []
                 for seed in self.params["seeds"]:
                     missing = self.make_missing(df, p, seed)
                     start = time.perf_counter_ns()
                     model = self.model(
                         **self.params["model_params"]).fit(missing)
-                    times[self.current_dataset][p]["fit"] += (time.perf_counter_ns() -
-                                                              start) / len(self.params["seeds"])
+                    fits.append(start := time.perf_counter_ns() - start)
                     imputed = model.transform(missing)
-                    times[self.current_dataset][p]["impute"] += (time.perf_counter_ns() -
-                                                                 start) / len(self.params["seeds"])
-                    error[self.current_dataset][p] += self.compute_error(
-                        df, imputed)
-                error[self.current_dataset][p] = float(
-                    error[self.current_dataset][p] / len(self.params["seeds"]))
-                times[self.current_dataset][p]["total"] = times[self.current_dataset][p]["fit"] + \
-                    times[self.current_dataset][p]["impute"]
+                    imputes.append(time.perf_counter_ns() - start)
+                    errors.append(self.compute_error(df, imputed))
+                self.add_metrics(p, error, times, errors, fits, imputes)
         self.to_disk(error, times)
 
     def make_missing(self, data, missing_rate, seed=None):
@@ -118,6 +116,28 @@ class Experiment:
         self.cat_cols = df.select_dtypes(exclude="number").columns
         self.only_num = self.cat_cols.empty
         return df
+
+    def add_metrics(self, p, error, times, seed_errors, fit_times, impute_times):
+        error[self.current_dataset][p] = {
+            "mean": float(np.mean(seed_errors)),
+            "std": float(np.std(seed_errors, ddof=1))
+        }
+
+        times[self.current_dataset][p] = {
+            "fit": {
+                "mean": float(np.mean(fit_times)),
+                "std": float(np.std(fit_times, ddof=1))
+            },
+            "impute": {
+                "mean": float(np.mean(impute_times)),
+                "std": float(np.std(impute_times, ddof=1))
+            },
+            "total": {
+                "mean": float(np.mean(np.array(fit_times) + np.array(impute_times))),
+                "std": float(np.std(np.array(fit_times) + np.array(impute_times), ddof=1))
+            }
+        }
+
 
     def supports_cat(self):
         if self.params["no_cat"] and not self.only_num:
