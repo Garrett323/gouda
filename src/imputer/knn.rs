@@ -122,7 +122,7 @@ impl KnnImputer {
         };
         let imputed = self.brute_force(arr.view(), dist);
         // return python object
-        utils::arr_to_out(py, &imputed, out, enc)
+        utils::arr_to_out(py, &imputed, out, enc.as_ref())
     }
 
     pub fn fit_transform<'py>(

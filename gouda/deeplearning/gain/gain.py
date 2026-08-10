@@ -28,7 +28,7 @@ Stability features
 from __future__ import annotations
 
 import warnings
-
+import pandas as pd
 import numpy as np
 try:
     import torch
@@ -47,6 +47,7 @@ from sklearn.base import TransformerMixin
 from sklearn.utils.validation import validate_data
 from sklearn.exceptions import NotFittedError
 from gouda.gouda import raise_if_nan_col
+from pyglue import Encoder
 
 
 # ---------------------------------------------------------------------------
@@ -362,7 +363,9 @@ class GAIN(_BaseImputer, TransformerMixin):
         -------
         self
         """
+        self._encoder = Encoder()
         X = validate_data(self, X, dtype=None, ensure_all_finite="allow-nan")
+        X = self._encoder.encode(X)
         X = np.array(X, dtype=np.float64)
         raise_if_nan_col(X)
         if X.ndim != 2:
@@ -562,8 +565,11 @@ class GAIN(_BaseImputer, TransformerMixin):
         if self.generator_ is None:
             raise RuntimeError("Call fit() before transform().")
 
+        is_df = isinstance(X, pd.DataFrame)
+        columns = X.columns if is_df else None
         X = validate_data(self, X, dtype=None,
                           ensure_all_finite="allow-nan", reset=False)
+        X = self._encoder.encode(X)
         X = np.array(X, dtype=np.float64)
         if X.ndim != 2:
             raise ValueError("X must be 2-D.")
@@ -593,6 +599,9 @@ class GAIN(_BaseImputer, TransformerMixin):
         obs_idx = mask_np == 1
         X_imputed[obs_idx] = X[obs_idx]
 
+        X_imputed = self._encoder.decode(X_imputed)
+        if is_df:
+            X_imputed = pd.DataFrame(X_imputed, columns=columns)
         return X_imputed
 
     def fit_transform(self, X: np.ndarray, y=None) -> np.ndarray:

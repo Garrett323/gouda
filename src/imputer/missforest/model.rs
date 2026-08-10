@@ -95,7 +95,7 @@ impl MissForest {
         let (arr, out, _enc) = pyany_to_vec(data, &self.string_encoding)?;
         let imputed = self.impute(&arr);
         // return python object
-        arr_to_out(py, &imputed, out, _enc)
+        arr_to_out(py, &imputed, out, _enc.as_ref())
     }
 
     pub fn fit_transform<'py>(
