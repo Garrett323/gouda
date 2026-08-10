@@ -38,43 +38,44 @@ class Experiment:
             error[self.current_dataset] = {}
             times[self.current_dataset] = {}
             for p in self.params["missing_rates"]:
-                # error[self.current_dataset][p] = 0.0
-                # times[self.current_dataset][p] = {
-                #     "fit": 0.0, "impute": 0.0, "total": 0.0}
                 errors = []
                 fits = []
                 imputes = []
                 for seed in self.params["seeds"]:
-                    missing = self.make_missing(df, p, seed)
-                    start = time.perf_counter_ns()
-                    model = self.model(
-                        **self.params["model_params"]).fit(missing)
-                    fits.append(start := time.perf_counter_ns() - start)
-                    imputed = model.transform(missing)
-                    imputes.append(time.perf_counter_ns() - start)
-                    errors.append(self.compute_error(df, imputed))
+                    missing, mask = self.make_missing(df, p, seed)
+                    _warmup = self.model(**self.params["model_params"]).fit(missing).transform(missing)
+                    for _ in range(20):
+                        start = time.perf_counter_ns()
+                        model = self.model(
+                            **self.params["model_params"]).fit(missing)
+                        fits.append(time.perf_counter_ns() - start)
+                        start = time.perf_counter_ns()
+                        imputed = model.transform(missing)
+                        imputes.append(time.perf_counter_ns() - start)
+                    errors.append(self.compute_error(df, imputed, mask))
                 self.add_metrics(p, error, times, errors, fits, imputes)
         self.to_disk(error, times)
 
     def make_missing(self, data, missing_rate, seed=None):
         match self.params["missing_mechanism"]:
             case "mcar":
-                return MCAR(random_seed=seed)(data, missing_rate)
+                missing = MCAR(random_seed=seed)(data, missing_rate)
             case "mnar":
-                return MNAR(**self.params["missing_params"], random_seed=seed)(data, missing_rate)
+                missing = MNAR(**self.params["missing_params"], random_seed=seed)(data, missing_rate)
             case "mar":
-                return MAR(**self.params["missing_params"], random_seed=seed)(data, missing_rate)
+                missing = MAR(**self.params["missing_params"], random_seed=seed)(data, missing_rate)
             case _:
                 raise NotImplementedError
+        return missing, missing.isna()
 
-    def compute_error(self, ground_truth, imputed) -> float:
+    def compute_error(self, ground_truth, imputed, missing_mask) -> float:
         if self.only_num:
             col_min = ground_truth.min()
             col_max = ground_truth.max()
             gt = (ground_truth - col_min) / (col_max - col_min)
             imputed = pd.DataFrame(imputed, columns=gt.columns, index=gt.index)
             imputed = (imputed - col_min) / (col_max - col_min)
-            nmse_error = ((gt - imputed) ** 2).mean().mean()
+            nmse_error = ((gt[missing_mask] - imputed[missing_mask]) ** 2).mean().mean()
             return nmse_error
 
         if not self.num_cols.empty:
@@ -84,6 +85,8 @@ class Experiment:
             # range normalize
             col_min = num_gt.min()
             col_max = num_gt.max()
+            num_gt = ground_truth[missing_mask][self.num_cols]
+            num_imputed = imputed[missing_mask][self.num_cols]
             num_gt = (num_gt - col_min) / (col_max - col_min)
             num_imputed = (num_imputed - col_min) / (col_max - col_min)
             nmse_error = ((num_gt - num_imputed) ** 2).mean().mean()
@@ -92,8 +95,8 @@ class Experiment:
 
         if not self.cat_cols.empty:
             # compute categorical error
-            cat_gt = ground_truth[self.cat_cols]
-            cat_imputed = imputed[self.cat_cols]
+            cat_gt = ground_truth[missing_mask][self.cat_cols]
+            cat_imputed = imputed[missing_mask][self.cat_cols]
             mask = cat_gt == cat_imputed
             cat_error = 1.0 - (mask.sum().sum() / mask.size)
         else:
@@ -123,18 +126,22 @@ class Experiment:
             "std": float(np.std(seed_errors, ddof=1))
         }
 
+        total_time = np.array(fit_times) + np.array(impute_times)
         times[self.current_dataset][p] = {
             "fit": {
                 "mean": float(np.mean(fit_times)),
+                "median": float(np.median(fit_times)),
                 "std": float(np.std(fit_times, ddof=1))
             },
             "impute": {
                 "mean": float(np.mean(impute_times)),
+                "median": float(np.median(impute_times)),
                 "std": float(np.std(impute_times, ddof=1))
             },
             "total": {
-                "mean": float(np.mean(np.array(fit_times) + np.array(impute_times))),
-                "std": float(np.std(np.array(fit_times) + np.array(impute_times), ddof=1))
+                "mean": float(np.mean(total_time)),
+                "median": float(np.median(total_time)),
+                "std": float(np.std(total_time, ddof=1))
             }
         }
 
