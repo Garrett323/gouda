@@ -44,7 +44,7 @@ class Experiment:
                 for seed in self.params["seeds"]:
                     missing, mask = self.make_missing(df, p, seed)
                     _warmup = self.model(**self.params["model_params"]).fit(missing).transform(missing)
-                    for _ in range(20):
+                    for _ in range(self.params["n_repetitions"]):
                         start = time.perf_counter_ns()
                         model = self.model(
                             **self.params["model_params"]).fit(missing)
@@ -174,27 +174,21 @@ def make_experiments(path: str) -> Generator[Experiment]:
 
 
 def get_model(model):
-    match model:
-        case "mice":
-            return Mice
-        case "knn":
-            return KnnImputer
-        case "svm":
-            return SVMImputer
-        case "gain":
-            return GAIN
-        case "knn-sk":
-            return KNNsk
-        case "simple":
-            return SimpleImputer
-        case "missforest":
-            return MissForest
-        case "missforest-py":
-            return MissForestPy
-        case "iterative":
-            return IterativeImputer
-        case _:
-            raise ValueError
+    MODELS = {
+        "mice": Mice,
+        "knn": KnnImputer,
+        "svm": SVMImputer,
+        "gain": GAIN,
+        "knn-sk": KNNsk,
+        "simple": SimpleImputer,
+        "missforest": MissForest,
+        "missforest-py": MissForestPy,
+        "iterative": IterativeImputer,
+    }
+    try:
+        return MODELS[model]
+    except KeyError:
+        raise ValueError(f"Unknown model: [{model}]")
 
 
 def parse_args():

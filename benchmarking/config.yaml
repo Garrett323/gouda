@@ -25,6 +25,7 @@ seeds:
   - 188
 missing_mechanism:
 no_cat: False
+n_repetitions: 20
 ---
 name: simple 
 model: simple
