@@ -85,7 +85,7 @@ impl Mice {
         let (arr, out, enc) = utils::pyany_to_vec(data, &self.string_encoding)?;
         let imputed = self.impute(arr.view());
         // return python object
-        utils::arr_to_out(py, &imputed, out, enc)
+        utils::arr_to_out(py, &imputed, out, enc.as_ref())
     }
 
     pub fn fit_transform<'py>(

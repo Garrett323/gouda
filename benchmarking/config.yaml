@@ -1,13 +1,13 @@
 name: default
 datasets:
   - 53
-  - 222
-  - 320
-  - 109
-  - 19
-  - 14
-  - 545
-  - 2
+  # - 222
+  # - 320
+  # - 109
+  # - 19
+  # - 14
+  # - 545
+  # - 2
 missing_rates:
   - 0.1
   - 0.2
@@ -25,6 +25,10 @@ seeds:
   - 188
 missing_mechanism:
 no_cat: False
+---
+name: simple 
+model: simple
+missing_mechanism: mcar
 
 ---
 name: mice
@@ -45,9 +49,22 @@ missing_mechanism: mcar
 model_params: 
   n_trees: 20
   max_depth: 20
-  min_samples_leaf: 3
+  # min_samples_leaf: 3
   encoding: label
 
+---
+name: svm
+model: svm
+missing_mechanism: mcar
+kernel: rbf
+
+---
+name: gain
+model: gain
+missing_mechanism: mcar
+no_cat: True
+
+#################################################### BASELINES ##########################################################################
 ---
 name: iterative 
 model: iterative

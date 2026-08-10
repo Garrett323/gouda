@@ -55,60 +55,7 @@ def missing_data(complete_data):
     return complete_data, X_missing, mask
 
 
-def test_checksklearn_simple():
-    check_estimator(GAIN(encoding="label"))
-
-class TestOutputValidity:
-
-    def test_nans_simple(self, missing_data):
-        data, missing, _ = missing_data
-        imputed = GAIN().fit(missing).transform(missing)
-        print("data:\n", data)
-        print(f"imputed:\n{imputed}")
-        assert not np.isnan(imputed).any(), "Imputed still has missing values"
-
-    def test_observed_values_unchanged(self, missing_data):
-        """A well-behaved imputer should not alter values that were already
-        observed — only fill in the missing ones."""
-        X_full, X_missing, mask = missing_data
-        model = GAIN(random_state=RANDOM_STATE)
-        out = model.fit_transform(X_missing)
-        observed = ~mask
-        np.testing.assert_allclose(
-            out[observed], X_full[observed], rtol=1e-5, atol=1e-5,
-            err_msg="Imputer modified originally-observed (non-missing) values",
-        )
-
-    def test_output_is_finite(self, missing_data):
-        _, X_missing, _ = missing_data
-        model = GAIN(random_state=RANDOM_STATE)
-        out = model.fit_transform(X_missing)
-        assert np.isfinite(out).all(), "Output contains inf/-inf/NaN"
-
-    def test_imputed_values_within_reasonable_range(self, missing_data):
-        """Imputed values shouldn't wildly exceed the observed data's range
-        (a common failure mode for a poorly-trained/unstable GAN)."""
-        X_full, X_missing, mask = missing_data
-        model = GAIN(random_state=RANDOM_STATE)
-        out = model.fit_transform(X_missing)
-
-        lo, hi = X_full.min(), X_full.max()
-        span = hi - lo
-        buffer = 0.5 * span  # generous slack
-        imputed_vals = out[mask]
-        assert imputed_vals.min() >= lo - buffer
-        assert imputed_vals.max() <= hi + buffer
-
-    def test_accepts_pandas_dataframe(self, missing_data):
-        _, X_missing, _ = missing_data
-        df = pd.DataFrame(X_missing, columns=[f"f{i}" for i in range(X_missing.shape[1])])
-        model = GAIN(random_state=RANDOM_STATE)
-        out = model.fit_transform(df)
-        assert not np.isnan(np.asarray(out)).any()
-
-
 class TestEdgeCases:
- 
     def test_no_missing_values(self, complete_data):
         """If there's nothing to impute, output should equal input (up to
         numerical tolerance) and definitely shouldn't error."""

@@ -1,7 +1,8 @@
 use crate::imputer::SimpleImputer;
 use crate::utils::{self, StringEncoding};
 use libsvm_rs::{
-    train, KernelType, SvmModel, SvmNode, SvmParameter, SvmParameterBuilder, SvmProblem, SvmType, set_quiet
+    set_quiet, train, KernelType, SvmModel, SvmNode, SvmParameter, SvmParameterBuilder, SvmProblem,
+    SvmType,
 };
 use ndarray::{Array2, ArrayView1, ArrayView2};
 use pyo3::prelude::*;
@@ -87,7 +88,7 @@ impl SVMImputer {
         // actual method
         let imputed = self.impute(arr.view());
         // return python object
-        utils::arr_to_out(py, &imputed, out, enc)
+        utils::arr_to_out(py, &imputed, out, enc.as_ref())
     }
 
     pub fn fit_transform<'py>(
@@ -255,7 +256,12 @@ fn create_problem(
         })
         .collect();
     SvmProblem {
-        labels: target_column.1.to_vec(),
+        labels: target_column
+            .1
+            .iter()
+            .filter(|&v| !v.is_nan())
+            .copied()
+            .collect(),
         instances,
     }
 }
@@ -263,6 +269,5 @@ fn create_problem(
 impl SVMImputer {}
 
 #[cfg(test)]
-mod tests {
-    use super::*; // has access to everything, including private
+mod tests { // use super::*; // has access to everything, including private
 }
