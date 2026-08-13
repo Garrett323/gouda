@@ -1,8 +1,8 @@
 use crate::imputer::SimpleImputer;
 use crate::utils::{self, StringEncoding};
 use libsvm_rs::{
-    set_quiet, train, KernelType, SvmModel, SvmNode, SvmParameter, SvmParameterBuilder, SvmProblem,
-    SvmType,
+    KernelType, SvmModel, SvmNode, SvmParameter, SvmParameterBuilder, SvmProblem, SvmType,
+    set_quiet, train,
 };
 use ndarray::{Array2, ArrayView1, ArrayView2};
 use pyo3::prelude::*;
@@ -269,5 +269,70 @@ fn create_problem(
 impl SVMImputer {}
 
 #[cfg(test)]
-mod tests { // use super::*; // has access to everything, including private
+mod tests {
+    use super::*; // has access to everything, including private
+    #[test]
+    fn create_problem_does_not_leak_target_column() {
+        let data = ndarray::array![[1.0, 10.0, 100.0], [2.0, 20.0, 200.0], [3.0, 30.0, 300.0],];
+
+        // Column 1 is the target: [10, 20, 30]
+        let target_column = data.column(1);
+
+        let problem = create_problem(data.view(), (1, target_column), false);
+
+        // We should have one training instance per non-NaN target.
+        assert_eq!(problem.instances.len(), 3);
+        assert_eq!(problem.labels, vec![10.0, 20.0, 30.0]);
+
+        for instance in &problem.instances {
+            let feature_indices: Vec<i32> = instance.iter().map(|node| node.index).collect();
+
+            // libsvm uses 1-based feature indices, so original column 1
+            // corresponds to feature index 2.
+            assert!(
+                !feature_indices.contains(&2),
+                "target column leaked into SVM features: {:?}",
+                feature_indices
+            );
+
+            // Columns 0 and 2 should remain as features.
+            assert!(
+                feature_indices.contains(&1),
+                "column 0 is missing from SVM features: {:?}",
+                feature_indices
+            );
+            assert!(
+                feature_indices.contains(&3),
+                "column 2 is missing from SVM features: {:?}",
+                feature_indices
+            );
+        }
+    }
+    #[test]
+    fn impute_preserves_missing_value_positions() {
+        let data = ndarray::array![
+            [f64::NAN, 2.0, f64::NAN],
+            [4.0, f64::NAN, 6.0],
+            [7.0, 8.0, 9.0],
+        ];
+
+        let mut imputer = SVMImputer::new("linear", None);
+
+        imputer.fit_model(data.view());
+
+        let result = imputer.impute(data.view());
+
+        // Every original NaN should now be filled.
+        assert!(!result[[0, 0]].is_nan());
+        assert!(!result[[0, 2]].is_nan());
+        assert!(!result[[1, 1]].is_nan());
+
+        // Values that were originally observed must remain unchanged.
+        assert_eq!(result[[0, 1]], 2.0);
+        assert_eq!(result[[1, 0]], 4.0);
+        assert_eq!(result[[1, 2]], 6.0);
+        assert_eq!(result[[2, 0]], 7.0);
+        assert_eq!(result[[2, 1]], 8.0);
+        assert_eq!(result[[2, 2]], 9.0);
+    }
 }
