@@ -1,7 +1,7 @@
 use crate::utils::{
-    self, StringEncoding,
-    constants::{NOT_FITTED_ERR, encoding_warn},
-    pyany_to_vec,
+    self,
+    constants::{encoding_warn, NOT_FITTED_ERR},
+    pyany_to_vec, StringEncoding,
 };
 use ndarray::Array2;
 use pyo3::prelude::*;
@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 pub struct ConstantImputer {
     value: f64,
+    ncols: usize,
     is_fitted: bool,
     string_encoding: Option<StringEncoding>,
 }
@@ -24,6 +25,7 @@ impl ConstantImputer {
     pub fn new(value: f64, encoding: Option<&str>) -> ConstantImputer {
         ConstantImputer {
             value,
+            ncols: 0,
             string_encoding: match encoding {
                 Some(_) => Some(StringEncoding::LabelEncoding),
                 None => None,
@@ -36,6 +38,7 @@ impl ConstantImputer {
     pub fn zero() -> ConstantImputer {
         ConstantImputer {
             value: 0.0,
+            ncols: 0,
             string_encoding: None,
             is_fitted: false,
         }
@@ -45,6 +48,7 @@ impl ConstantImputer {
         {
             let mut inner = slf.borrow_mut(py);
             let (arr, _, _) = pyany_to_vec(_data, &inner.string_encoding)?;
+            inner.ncols = arr.ncols();
             utils::raise_if_nan_col(arr.view())?;
             if let Some(_) = inner.string_encoding {
                 pyo3::PyErr::warn(
@@ -72,6 +76,7 @@ impl ConstantImputer {
             )));
         }
         let (arr, out, enc) = pyany_to_vec(data, &self.string_encoding)?;
+        utils::check_feature_mismatch(self.ncols, arr.ncols())?;
         let imputed = self.impute(&arr);
         // return python object
         utils::arr_to_out(py, &imputed, out, enc.as_ref())
@@ -119,6 +124,7 @@ impl ConstantImputer {
         self.value = decoded.value;
         self.string_encoding = decoded.string_encoding;
         self.is_fitted = decoded.is_fitted;
+        self.ncols = decoded.ncols;
         Ok(())
     }
 }

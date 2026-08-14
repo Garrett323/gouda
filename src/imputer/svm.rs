@@ -1,8 +1,8 @@
 use crate::imputer::SimpleImputer;
 use crate::utils::{self, StringEncoding};
 use libsvm_rs::{
-    KernelType, SvmModel, SvmNode, SvmParameter, SvmParameterBuilder, SvmProblem, SvmType,
-    set_quiet, train,
+    set_quiet, train, KernelType, SvmModel, SvmNode, SvmParameter, SvmParameterBuilder, SvmProblem,
+    SvmType,
 };
 use ndarray::{Array2, ArrayView1, ArrayView2};
 use pyo3::prelude::*;
@@ -29,11 +29,11 @@ const ALLOWED_KERNELS: &[&str] = &["linear", "rbf", "sigmoid", "polynomial"];
 impl SVMImputer {
     #[new]
     #[pyo3(signature = (kernel="linear", encoding=None))]
-    pub fn new(kernel: &str, encoding: Option<&str>) -> SVMImputer {
+    pub fn new(kernel: &str, encoding: Option<&str>) -> PyResult<SVMImputer> {
         set_quiet(true);
         // assert!(ALLOWED_WEIGHTS.contains(&weights));
         // SVMImputer::sanity_check(&metric, &weights);
-        SVMImputer {
+        Ok(SVMImputer {
             models: Vec::new(),
             is_fitted: false,
             kernel: match kernel.to_lowercase().as_str() {
@@ -42,7 +42,12 @@ impl SVMImputer {
                 "sigmoid" => KernelType::Sigmoid,
                 "polynomial" => KernelType::Polynomial,
                 // "precomputed" => KernelType::Precomputed,
-                _ => panic!("kernel parameter not supported, {:?}", ALLOWED_KERNELS),
+                value => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "kernel parameter [{}] not supported, {:?}",
+                        value, ALLOWED_KERNELS
+                    )));
+                }
             },
             _cat_cols: Vec::new(),
             num_cols: Vec::new(),
@@ -51,7 +56,7 @@ impl SVMImputer {
                 Some(_) => Some(StringEncoding::LabelEncoding),
             },
             init: SimpleImputer::new(encoding),
-        }
+        })
     }
 
     pub fn fit(slf: Py<Self>, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {

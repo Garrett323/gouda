@@ -2,6 +2,7 @@ use super::backend::{LinearRegression, LogisticRegression, PMM, Ridge, Solver};
 use crate::imputer::SimpleImputer;
 use crate::utils::{self, SendPtr, StringEncoding};
 use ndarray::{Array1, Array2, ArrayView2, Axis};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes};
 use rayon::prelude::*;
@@ -32,14 +33,20 @@ impl Mice {
         alpha: f64,
         pmm_backend: &str,
         encoding: Option<&str>,
-    ) -> Mice {
+    ) -> PyResult<Mice> {
         let backend = match backend.to_lowercase().as_str() {
             "linear" => Solver::Linear(LinearRegression::new()),
             "ridge" => Solver::Ridge(Ridge::new(alpha)),
-            "pmm" => Solver::PMM(PMM::new(5, pmm_backend, Some(alpha))),
-            _ => panic!("Solver {backend} not supported!"),
+            "pmm" => {
+                Solver::PMM(PMM::new(5, pmm_backend, Some(alpha)).map_err(PyValueError::new_err)?)
+            }
+            value => {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Solver {value} not supported!"
+                )));
+            }
         };
-        Mice {
+        Ok(Mice {
             max_iter,
             _n_iter: 0, // needed for sklearn compliance
             backend: backend,
@@ -52,7 +59,7 @@ impl Mice {
             },
             cat_columns: None,
             init: SimpleImputer::new(encoding),
-        }
+        })
     }
 
     pub fn fit(slf: Py<Self>, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
@@ -83,6 +90,7 @@ impl Mice {
             )));
         }
         let (arr, out, enc) = utils::pyany_to_vec(data, &self.string_encoding)?;
+        utils::check_feature_mismatch(self.models.len(), arr.ncols())?;
         let imputed = self.impute(arr.view());
         // return python object
         utils::arr_to_out(py, &imputed, out, enc.as_ref())

@@ -338,6 +338,7 @@ impl KnnImputer {
         let ranges = if let Metrics::Gower(v) = &self.metric {
             v.as_ref().unwrap().as_slice()
         } else {
+            // This panic is intentional; it should not be possible to trigger this from the api
             panic!("Set distance to gower when calling gower!");
         };
         let mut total = 0.0;

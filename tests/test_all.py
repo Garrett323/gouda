@@ -161,6 +161,26 @@ class TestOutputValidity:
         assert not np.isnan(np.asarray(out)).any()
 
 @pytest.mark.parametrize("model", Imputers)
+def test_transform_rejects_feature_count_mismatch(model):
+    """Transform must reject data with a different number of features."""
+    train = np.array([
+        [1.0, 10.0],
+        [2.0, 20.0],
+        [3.0, 30.0],
+    ])
+
+    # Three features, while the model was fitted with two.
+    test = np.array([
+        [np.nan, 15.0, 100.0],
+        [2.5, np.nan, 200.0],
+    ])
+
+    imputer = model(**param[model.__name__]).fit(train)
+
+    with pytest.raises(ValueError, match=r"(?i)feature"):
+        imputer.transform(test)
+
+@pytest.mark.parametrize("model", Imputers)
 def test_transform_is_batch_invariant(model):
     """
     Transforming rows together must produce the same values as transforming

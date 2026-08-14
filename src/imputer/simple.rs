@@ -56,6 +56,13 @@ impl SimpleImputer {
             )));
         }
         let (arr, out, enc) = pyany_to_vec(data, &self.string_encoding)?;
+        utils::check_feature_mismatch(
+            self.sample_means
+                .as_ref()
+                .expect("Fit didnt fit lol; this error should never trigger!")
+                .len(),
+            arr.ncols(),
+        )?;
         let imputed = self.impute(arr.view());
         // return python object
         arr_to_out(py, &imputed, out, enc.as_ref())

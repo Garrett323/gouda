@@ -246,23 +246,25 @@ fn add_bias_column(x: &Array2<f64>) -> Array2<f64> {
 
 const PMM_BACKEND: &[&str] = &["linear", "ridge"];
 impl PMM {
-    pub fn new(n_neighbors: usize, backend: &str, alpha: Option<f64>) -> PMM {
+    pub fn new(n_neighbors: usize, backend: &str, alpha: Option<f64>) -> Result<PMM, String> {
         let model = match backend.to_lowercase().as_str() {
             "linear" => Box::new(Solver::Linear(LinearRegression::new())),
             "ridge" => Box::new(Solver::Ridge(Ridge::new(
                 alpha.expect("Provide a Some(value) for alpha"),
             ))),
-            _ => panic!(
-                "Solver {backend} not supported! List of supported backend for PMM {:?}",
-                PMM_BACKEND
-            ),
+            _ => {
+                return Err(format!(
+                    "Solver {backend} not supported! List of supported backend for PMM {:?}",
+                    PMM_BACKEND
+                ));
+            }
         };
-        PMM {
+        Ok(PMM {
             n_neighbors,
             pool: None,
             model: model,
             rng: Mutex::new(rand::rngs::SmallRng::seed_from_u64(42)),
-        }
+        })
     }
 
     fn sample(&self, arr: &[f64]) -> f64 {
