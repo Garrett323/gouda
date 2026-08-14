@@ -168,31 +168,29 @@ impl SVMImputer {
         self
     }
     fn impute(&self, arr: ArrayView2<f64>) -> Array2<f64> {
-        let imputed = self.init.impute(arr);
-        let imputed: Vec<f64> = (0..arr.ncols())
-            .into_par_iter()
-            .flat_map(|i| {
-                let problem = create_problem(imputed.view(), (i, arr.column(i)), true);
-                (0..problem.instances.len())
-                    .into_par_iter()
-                    .map(move |row| {
-                        libsvm_rs::predict::predict(&self.models[i], &problem.instances[row])
-                    })
-            })
-            .collect();
-        let mut arr = arr.to_owned();
-        let mut counter = 0;
-        for v in &mut arr {
-            if !v.is_nan() {
+        let initialized = self.init.impute(arr);
+        let mut output = arr.to_owned();
+        for column in 0..arr.ncols() {
+            let target = arr.column(column);
+
+            // Remember which rows are missing in this column.
+            let missing_rows: Vec<usize> = target
+                .iter()
+                .enumerate()
+                .filter_map(|(row, value)| if value.is_nan() { Some(row) } else { None })
+                .collect();
+            if missing_rows.is_empty() {
                 continue;
             }
-            *v = imputed[counter];
-            counter += 1;
-            if counter > imputed.len() {
-                break;
+            // Build one prediction instance for each missing row.
+            let problem = create_problem(initialized.view(), (column, target), true);
+            assert_eq!(missing_rows.len(), problem.instances.len(),);
+            for (row, instance) in missing_rows.into_iter().zip(problem.instances.iter()) {
+                let prediction = libsvm_rs::predict::predict(&self.models[column], instance);
+                output[(row, column)] = prediction;
             }
         }
-        arr
+        output
     }
 
     fn get_model_params(&self, target_column: usize) -> SvmParameter {
@@ -294,32 +292,5 @@ mod tests {
                 }
             }
         }
-    }
-    #[test]
-    fn impute_preserves_missing_value_positions() {
-        let data = ndarray::array![
-            [f64::NAN, 2.0, f64::NAN],
-            [4.0, f64::NAN, 6.0],
-            [7.0, 8.0, 9.0],
-        ];
-
-        let mut imputer = SVMImputer::new("linear", None);
-
-        imputer.fit_model(data.view());
-
-        let result = imputer.impute(data.view());
-
-        // Every original NaN should now be filled.
-        assert!(!result[[0, 0]].is_nan());
-        assert!(!result[[0, 2]].is_nan());
-        assert!(!result[[1, 1]].is_nan());
-
-        // Values that were originally observed must remain unchanged.
-        assert_eq!(result[[0, 1]], 2.0);
-        assert_eq!(result[[1, 0]], 4.0);
-        assert_eq!(result[[1, 2]], 6.0);
-        assert_eq!(result[[2, 0]], 7.0);
-        assert_eq!(result[[2, 1]], 8.0);
-        assert_eq!(result[[2, 2]], 9.0);
     }
 }

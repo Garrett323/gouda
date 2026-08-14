@@ -35,6 +35,8 @@ class KnnImputer(_BaseImputer, TransformerMixin):
         self._model = None
 
     def fit(self, X, y=None):
+        if self.k <= 0:
+            raise ValueError("To use knn imputation please pass k > 0!")
         self._model = KnnImputerRS(
             self.k, metric=self.metric, weights=self.weights, encoding=self.encoding
         )

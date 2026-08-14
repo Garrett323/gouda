@@ -160,6 +160,68 @@ class TestOutputValidity:
             out = m.fit_transform(df)
         assert not np.isnan(np.asarray(out)).any()
 
+@pytest.mark.parametrize("model", Imputers)
+def test_transform_is_batch_invariant(model):
+    """
+    Transforming rows together must produce the same values as transforming
+    each row separately.
+
+    This detects predictions being assigned to the wrong row or column.
+    """
+    x = np.arange(1.0, 21.0)
+
+    # Different scales make cross-column prediction swaps distinguishable.
+    train = np.column_stack([
+        x,
+        100.0 + 10.0 * x,
+        10_000.0 + 1_000.0 * x,
+    ])
+
+    # Asymmetric missing positions are important. Column-major prediction
+    # order differs from row-major missing-cell order.
+    test = np.array([
+        [np.nan, 175.0, np.nan],
+        [12.5, np.nan, 22_500.0],
+        [15.0, 250.0, 25_000.0],
+    ])
+
+    imputer = model(**param[model.__name__]).fit(train)
+
+    batch_result = np.asarray(imputer.transform(test))
+
+    individual_result = np.vstack([
+        np.asarray(imputer.transform(test[row:row + 1]))[0]
+        for row in range(test.shape[0])
+    ])
+
+    assert batch_result.shape == test.shape
+    assert individual_result.shape == test.shape
+
+    assert np.isfinite(batch_result).all()
+    assert np.isfinite(individual_result).all()
+
+    np.testing.assert_allclose(
+        batch_result,
+        individual_result,
+        rtol=1e-5,
+        atol=1e-5,
+        err_msg=(
+            f"{model.__name__} produces different results when rows are "
+            "transformed together versus individually. Predictions may have "
+            "been assigned to the wrong coordinates."
+        ),
+    )
+
+    # Observed values must remain exactly unchanged.
+    observed = ~np.isnan(test)
+    np.testing.assert_allclose(
+        batch_result[observed],
+        test[observed],
+        rtol=0.0,
+        atol=0.0,
+        err_msg=f"{model.__name__} modified observed values",
+    )
+
 
 @pytest.mark.parametrize("model", Imputers)
 def test_checksklearn(model):

@@ -268,7 +268,10 @@ impl KnnImputer {
     fn get_weights(&self, distances: &[f64]) -> Vec<f64> {
         match self.weights {
             Weights::Uniform => vec![1.0; distances.len()],
-            Weights::Distance => distances.iter().map(|d| 1.0 / d).collect(),
+            Weights::Distance => distances
+                .iter()
+                .map(|d| 1.0 / d.max(f64::EPSILON))
+                .collect(),
         }
     }
 
