@@ -214,6 +214,11 @@ jobs:
           python -m pip install dist/*.whl
 
       - name: Verify installed package
+        env:
+          RAYON_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          OMP_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
         run: |
           cd "$RUNNER_TEMP"
           python -c "import gouda; print(gouda.__file__)"
