@@ -1,4 +1,4 @@
-use super::backend::{LinearRegression, LogisticRegression, Ridge, Solver, PMM};
+use super::backend::{LinearRegression, LogisticRegression, PMM, Ridge, Solver};
 use crate::imputer::SimpleImputer;
 use crate::utils::{self, SendPtr, StringEncoding};
 use ndarray::{Array1, Array2, ArrayView2, Axis};
@@ -150,17 +150,14 @@ impl Mice {
         // initial mean imputation
         let mut imputed = self.init.impute(data.view());
         for _ in 0..self.max_iter {
-            let imp_ptr = std::sync::Arc::new(SendPtr(imputed.as_mut_ptr()));
-            (0..data.ncols()).into_par_iter().for_each(|j| {
-                let (_, x_test, _, missing_indices) = split((&imputed).view(), data, j);
-                let ptr = std::sync::Arc::clone(&imp_ptr);
-                let predictions = self.models[j].predict(&x_test);
-                for (k, v) in predictions.iter().enumerate() {
-                    unsafe {
-                        *ptr.0.add(missing_indices[k] * data.ncols() + j) = *v;
-                    }
-                }
-            });
+            let (predictions, missing_percolumn): (Vec<_>, Vec<_>) = (0..data.ncols())
+                .into_par_iter()
+                .map(|j| {
+                    let (_, x_test, _, missing_indices) = split((&imputed).view(), data, j);
+                    (self.models[j].predict(&x_test), missing_indices)
+                })
+                .collect();
+            update_imputed(&mut imputed, predictions, missing_percolumn);
         }
         imputed
     }
@@ -177,23 +174,43 @@ impl Mice {
                 }
             })
             .collect();
-        let imp_ptr = std::sync::Arc::new(SendPtr(imputed.as_mut_ptr()));
         for _ in 0..self.max_iter {
-            models.par_iter_mut().enumerate().for_each(|(j, m)| {
-                let (x_train, x_test, y_train, missing_indices) = split((&imputed).into(), data, j);
-                m.fit(&x_train, &y_train);
-                let ptr = std::sync::Arc::clone(&imp_ptr);
-                for (k, v) in m.predict(&x_test).iter().enumerate() {
-                    unsafe {
-                        *ptr.0.add(missing_indices[k] * data.ncols() + j) = *v;
-                    }
-                }
-            });
+            let (predictions, missing_percolumn): (Vec<_>, Vec<_>) = models
+                .par_iter_mut()
+                .enumerate()
+                .map(|(j, m)| {
+                    let (x_train, x_test, y_train, missing_indices) =
+                        split((&imputed).into(), data, j);
+                    m.fit(&x_train, &y_train);
+                    (m.predict(&x_test), missing_indices)
+                })
+                .collect();
+            update_imputed(&mut imputed, predictions, missing_percolumn);
         }
         self._n_iter = self.max_iter;
         self.models = models;
         self
     }
+}
+
+fn update_imputed(
+    data: &mut Array2<f64>,
+    predictions: Vec<Array1<f64>>,
+    missing_percolumn: Vec<Vec<usize>>,
+) {
+    let data_ptr = std::sync::Arc::new(SendPtr(data.as_mut_ptr()));
+    predictions
+        .into_par_iter()
+        .zip(missing_percolumn)
+        .enumerate()
+        .for_each(|(j, (pred, miss_idx))| {
+            let ptr = std::sync::Arc::clone(&data_ptr);
+            for (k, v) in pred.iter().enumerate() {
+                unsafe {
+                    *ptr.0.add(miss_idx[k] * data.ncols() + j) = *v;
+                }
+            }
+        });
 }
 
 fn split(
