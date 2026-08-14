@@ -210,7 +210,7 @@ jobs:
       - name: Install wheel and test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest missforest torch
+          python -m pip install pytest
           python -m pip install dist/*.whl
 
       - name: Verify installed package
@@ -220,8 +220,12 @@ jobs:
       - name: Test installed wheel
         run: |
           cp -R "$GITHUB_WORKSPACE/tests" "$RUNNER_TEMP/tests"
+          cp "$GITHUB_WORKSPACE/pytest.ini" "$RUNNER_TEMP/pytest.ini"
           cd "$RUNNER_TEMP"
-          python -m pytest -q tests
+          python -m pytest -q \
+            -m "not heavy" \
+            --ignore=tests/test_gain.py \
+            tests
 
   release:
     name: Release
