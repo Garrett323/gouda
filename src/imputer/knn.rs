@@ -39,8 +39,13 @@ const ALLOWED_METRICS: &[&str] = &["nan_euclid", "expected_distance", "gower"];
 impl KnnImputer {
     #[new]
     #[pyo3(signature = (k=5, metric="nan_euclid", weights="uniform", encoding=None))]
-    pub fn new(k: usize, metric: &str, weights: &str, encoding: Option<&str>) -> KnnImputer {
-        KnnImputer {
+    pub fn new(
+        k: usize,
+        metric: &str,
+        weights: &str,
+        encoding: Option<&str>,
+    ) -> PyResult<KnnImputer> {
+        Ok(KnnImputer {
             k,
             data: None,
             is_fitted: false,
@@ -48,26 +53,35 @@ impl KnnImputer {
                 "nan_euclid" => Metrics::NanEuclid,
                 "expected_distance" => Metrics::ExpectedDistance,
                 "gower" => Metrics::Gower(None),
-                s => panic!(
-                    "Metric parameter [{}] not supported, supported metrics: {:?}",
-                    s, ALLOWED_METRICS
-                ),
+                s => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "Metric parameter [{}] not supported, supported metrics: {:?}",
+                        s, ALLOWED_METRICS
+                    )));
+                }
             },
             weights: match weights.to_lowercase().as_str() {
                 "uniform" => Weights::Uniform,
                 "distance" => Weights::Distance,
-                s => panic!(
-                    "Weight parameter [{}] not supported, supported weights: {:?}",
-                    s, ALLOWED_WEIGHTS
-                ),
+                s => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "Weight parameter [{}] not supported, supported weights: {:?}",
+                        s, ALLOWED_WEIGHTS
+                    )));
+                }
             },
             cat_cols: None,
             num_cols: None,
             string_encoding: match encoding {
                 None => None,
-                Some(_) => Some(StringEncoding::LabelEncoding),
+                Some("label") => Some(StringEncoding::LabelEncoding),
+                Some(value) => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "Unsupported encoding {value:?}; expected 'label' or None"
+                    )));
+                }
             },
-        }
+        })
     }
 
     pub fn fit(slf: Py<Self>, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
@@ -199,17 +213,11 @@ impl KnnImputer {
                 .filter(|&j| data[(row, j)].is_nan())
                 .collect();
             let p = data.row(row);
-            let distances: Vec<f64> = (0..data.nrows())
+            let distances: Vec<f64> = (0..base.nrows())
                 .into_par_iter()
-                .map(|r| {
-                    if r == row {
-                        f64::MAX
-                    } else {
-                        dist(&self, p, base.row(r))
-                    }
-                })
+                .map(|r| dist(&self, p, base.row(r)))
                 .collect();
-            let mut indices: Vec<_> = (0..data.nrows()).collect();
+            let mut indices: Vec<_> = (0..base.nrows()).collect();
             indices.par_sort_unstable_by(|&a, &b| unsafe {
                 distances
                     .get_unchecked(a)
@@ -227,21 +235,28 @@ impl KnnImputer {
 
     fn average(&self, indices: &[usize], cols: &[usize], weights: &[f64]) -> Vec<f64> {
         let base = self.data.as_ref().unwrap();
-        let avg = |c: &usize| {
+        let avg = |&c: &usize| {
             let mut count = 0;
             let mut avg = 0.0;
-            for i in indices {
-                let val = unsafe { *base.row(*i).uget(*c) };
+            let mut weight_sum = 0.0;
+            for &i in indices {
+                let val = unsafe { *base.row(i).uget(c) };
                 if val.is_nan() {
                     continue;
                 }
-                avg += val * unsafe { weights.get_unchecked(*i) };
+                let weight = unsafe { weights.get_unchecked(i) };
+                avg += val * weight;
+                weight_sum += weight;
                 count += 1;
                 if count >= self.k {
                     break;
                 }
             }
-            avg
+            if count == 0 {
+                f64::NAN
+            } else {
+                avg / weight_sum
+            }
         };
         if cols.len() > 100 {
             cols.par_iter().map(avg).collect()
@@ -252,7 +267,7 @@ impl KnnImputer {
 
     fn get_weights(&self, distances: &[f64]) -> Vec<f64> {
         match self.weights {
-            Weights::Uniform => distances.iter().map(|_| 1.0 / self.k as f64).collect(),
+            Weights::Uniform => vec![1.0; distances.len()],
             Weights::Distance => distances.iter().map(|d| 1.0 / d).collect(),
         }
     }
@@ -353,14 +368,27 @@ impl KnnImputer {
 
 #[cfg(test)]
 mod tests {
-    use ndarray::Array1;
+    use ndarray::{Array1, array};
 
     use super::*; // has access to everything, including private
 
     #[test]
+    fn distance_weights_are_normalized() {
+        let mut knn = KnnImputer::new(2, "nan_euclid", "distance", None).unwrap();
+        knn.data = Some(array![[10.0], [20.0]]);
+
+        // With distances 1 and 3, the weighted mean is:
+        // (10 / 1 + 20 / 3) / (1 / 1 + 1 / 3) = 12.5.
+        let distances = [1.0, 3.0];
+        let actual = knn.average(&[0, 1], &[0], &knn.get_weights(&distances))[0];
+
+        assert!((actual - 12.5).abs() < 1e-12, "actual: {actual}");
+    }
+
+    #[test]
     fn gower() {
         // gower is same as nan_euclid for numeric only
-        let knn = KnnImputer::new(5, "gower", "uniform", Some("label"));
+        let knn = KnnImputer::new(5, "gower", "uniform", Some("label")).unwrap();
         let p = &[f64::NAN, 0.22129885, 0.8863533, 0.50595314, 0.5011135];
 
         for (e, q) in EXPECTED_EUCLID.iter().zip(POINTS_EUCLID) {
@@ -376,7 +404,7 @@ mod tests {
 
     #[test]
     fn nan_euclid() {
-        let knn = KnnImputer::new(5, "nan_euclid", "uniform", None);
+        let knn = KnnImputer::new(5, "nan_euclid", "uniform", None).unwrap();
         let p = &[f64::NAN, 0.22129885, 0.8863533, 0.50595314, 0.5011135];
 
         for (e, q) in EXPECTED_EUCLID.iter().zip(POINTS_EUCLID) {
@@ -412,7 +440,7 @@ mod tests {
             1.777112,
             0.666,
         ];
-        let knn = KnnImputer::new(5, "expected_distance", "uniform", None);
+        let knn = KnnImputer::new(5, "expected_distance", "uniform", None).unwrap();
         for (e, q) in expected.iter().zip(points) {
             let result = knn.expected_distance(
                 Array1::from_vec(p.to_vec()).view(),
@@ -429,7 +457,7 @@ mod tests {
 
     #[test]
     fn compare() {
-        let knn = KnnImputer::new(5, "nan_euclid", "uniform", None);
+        let knn = KnnImputer::new(5, "nan_euclid", "uniform", None).unwrap();
         let (a, b) = (&[1.0, 2.0], &[3.0, 4.0]);
         let diff = knn
             .nan_euclid(

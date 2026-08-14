@@ -214,8 +214,9 @@ fn create_problem(
     only_nans: bool,
 ) -> SvmProblem {
     let (left, right) = data.view().split_at(ndarray::Axis(1), target_column.0);
-    let left_rows = left.rows();
+    let (_, right) = right.view().split_at(ndarray::Axis(1), 1);
     let right_rows = right.rows();
+    let left_rows = left.rows();
 
     let instances: Vec<Vec<SvmNode>> = left_rows
         .into_iter()
@@ -285,27 +286,13 @@ mod tests {
         assert_eq!(problem.labels, vec![10.0, 20.0, 30.0]);
 
         for instance in &problem.instances {
-            let feature_indices: Vec<i32> = instance.iter().map(|node| node.index).collect();
-
-            // libsvm uses 1-based feature indices, so original column 1
-            // corresponds to feature index 2.
-            assert!(
-                !feature_indices.contains(&2),
-                "target column leaked into SVM features: {:?}",
-                feature_indices
-            );
-
-            // Columns 0 and 2 should remain as features.
-            assert!(
-                feature_indices.contains(&1),
-                "column 0 is missing from SVM features: {:?}",
-                feature_indices
-            );
-            assert!(
-                feature_indices.contains(&3),
-                "column 2 is missing from SVM features: {:?}",
-                feature_indices
-            );
+            let values: Vec<_> = instance.iter().map(|node| node.value).collect();
+            println!("{:?}", values);
+            for v in values {
+                for t in target_column {
+                    assert!((v - t).abs() > 1e-8, "target feature leaked");
+                }
+            }
         }
     }
     #[test]

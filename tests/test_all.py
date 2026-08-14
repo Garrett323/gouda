@@ -42,6 +42,30 @@ def test_raises_on_all_nan_column(model):
     except ValueError:
         pass  # acceptable: explicit, informative failure
 
+@pytest.mark.parametrize("model", Imputers)
+def test_larger_test(model):
+    """
+    Test if the model handles tests sets larger than training.
+    """
+    train = np.array([
+          [10.0, 0.0],
+          [20.0, 1.0],
+      ])
+
+    test = np.array([
+        [np.nan, 0.0],
+        [np.nan, 1.0],
+        [np.nan, 0.5],
+    ])
+
+    imputer = model(**param[model.__name__])
+    result = np.asarray(imputer.fit(train).transform(test))
+
+    assert result.shape == test.shape
+    assert np.isfinite(result).all()
+
+    observed = ~np.isnan(test)
+    np.testing.assert_allclose(result[observed], test[observed])
 
 class TestInputValidity:
     @pytest.mark.parametrize("model", Imputers)

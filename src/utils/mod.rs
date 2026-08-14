@@ -1,7 +1,4 @@
-use ndarray::ArrayView2;
-use rayon::prelude::*;
 pub mod constants;
-use std::collections::HashMap;
 
 pub struct SendPtr(pub *mut f64);
 unsafe impl Send for SendPtr {}
