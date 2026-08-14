@@ -215,8 +215,8 @@ jobs:
 
       - name: Verify installed package
         run: |
+          cd "$RUNNER_TEMP"
           python -c "import gouda; print(gouda.__file__)"
-
       - name: Test installed wheel
         run: |
           cp -R "$GITHUB_WORKSPACE/tests" "$RUNNER_TEMP/tests"
