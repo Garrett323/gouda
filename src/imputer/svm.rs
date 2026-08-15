@@ -1,11 +1,10 @@
 use crate::imputer::SimpleImputer;
-use crate::utils::{self, StringEncoding};
+use crate::utils::{self, Errors, StringEncoding};
 use libsvm_rs::{
     KernelType, SvmError, SvmModel, SvmNode, SvmParameter, SvmParameterBuilder, SvmProblem,
     SvmType, set_quiet, train,
 };
 use ndarray::{Array2, ArrayView1, ArrayView2};
-use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes};
 use rayon::prelude::*;
@@ -72,7 +71,7 @@ impl SVMImputer {
                     .collect();
                 inner.cat_cols = indices;
             }
-            inner.fit_model(arr.view()).map_err(PyValueError::new_err)?;
+            inner.fit_model(arr.view())?;
             inner.is_fitted = true;
         } // dropping inner here (releasing the mutex)
         Ok(slf)
@@ -90,7 +89,7 @@ impl SVMImputer {
         let (arr, out, enc) = utils::pyany_to_vec(data, &self.string_encoding)?;
         utils::check_feature_mismatch(self.models.len(), arr.ncols())?;
         // actual method
-        let imputed = self.impute(arr.view());
+        let imputed = self.impute(arr.view())?;
         // return python object
         utils::arr_to_out(py, &imputed, out, enc.as_ref())
     }
@@ -149,7 +148,7 @@ impl SVMImputer {
 }
 
 impl SVMImputer {
-    fn fit_model(&mut self, arr: ArrayView2<f64>) -> Result<&SVMImputer, String> {
+    fn fit_model(&mut self, arr: ArrayView2<f64>) -> Result<&SVMImputer, Errors> {
         let imputed = self
             .init
             .fit_impl(
@@ -159,8 +158,8 @@ impl SVMImputer {
                 } else {
                     Some(&self.cat_cols)
                 },
-            )
-            .impute(arr);
+            )?
+            .impute(arr)?;
         self.models = Vec::with_capacity(arr.ncols());
         let models: Vec<Result<SvmModel, SvmError>> = (0..arr.ncols())
             .into_par_iter()
@@ -173,15 +172,18 @@ impl SVMImputer {
         for (col, m) in models.into_iter().enumerate() {
             match m {
                 Ok(model) => self.models.push(model),
-                Err(e) => {
-                    return Err(format!("Unable to create SVM for column {}: {:?}", col, e));
+                Err(err) => {
+                    return Err(Errors::SvmTraining {
+                        column: col,
+                        message: err.to_string(),
+                    });
                 }
             }
         }
         Ok(self)
     }
-    fn impute(&self, arr: ArrayView2<f64>) -> Array2<f64> {
-        let initialized = self.init.impute(arr);
+    fn impute(&self, arr: ArrayView2<f64>) -> Result<Array2<f64>, Errors> {
+        let initialized = self.init.impute(arr)?;
         let mut output = arr.to_owned();
         for column in 0..arr.ncols() {
             let target = arr.column(column);
@@ -203,7 +205,7 @@ impl SVMImputer {
                 output[(row, column)] = prediction;
             }
         }
-        output
+        Ok(output)
     }
 
     fn get_model_params(&self, target_column: usize) -> Result<SvmParameter, SvmError> {

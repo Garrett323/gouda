@@ -2,13 +2,14 @@ use super::super::SimpleImputer;
 use crate::{
     imputer::missforest::backend::{self, RandomForest},
     utils::{
+        Errors::{self, Shape},
         StringEncoding, arr_to_out,
         constants::{ENCODING_WARN, NOT_FITTED_ERR},
         pyany_to_vec,
     },
 };
 use ndarray::parallel::prelude::*;
-use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
+use ndarray::{Array2, ArrayView1, ArrayView2, Axis};
 use pyo3::prelude::*;
 use rand::prelude::*;
 
@@ -74,7 +75,7 @@ impl MissForest {
                 )?;
             };
             let (arr, _out, _enc) = pyany_to_vec(data, &inner.string_encoding)?;
-            inner.fit_impl(&arr);
+            inner.fit_impl(&arr)?;
             inner.is_fitted = true;
         } // dropping inner here (releasing the mutex)
         Ok(slf)
@@ -93,7 +94,7 @@ impl MissForest {
             )));
         }
         let (arr, out, _enc) = pyany_to_vec(data, &self.string_encoding)?;
-        let imputed = self.impute(&arr);
+        let imputed = self.impute(&arr)?;
         // return python object
         arr_to_out(py, &imputed, out, _enc.as_ref())
     }
@@ -112,7 +113,7 @@ impl MissForest {
 }
 
 impl MissForest {
-    fn fit_impl(&mut self, data: &Array2<f64>) -> &Self {
+    fn fit_impl(&mut self, data: &Array2<f64>) -> Result<&Self, Errors> {
         let ncols = data.ncols();
         self.forrests = (0..ncols)
             .map(|_| {
@@ -125,8 +126,8 @@ impl MissForest {
             })
             .collect();
 
-        self.init.fit_impl(data.view(), None);
-        let mut cur = self.init.impute(data.view());
+        self.init.fit_impl(data.view(), None)?;
+        let mut cur = self.init.impute(data.view())?;
         let mut nxt = cur.clone();
 
         let mut gamma_old = f64::MAX;
@@ -137,17 +138,22 @@ impl MissForest {
             gamma_old = gamma_new;
             // best_forests = self.forrests.clone();
 
-            nxt.axis_iter_mut(Axis(1))
+            let res: Result<(), Errors> = nxt
+                .axis_iter_mut(Axis(1))
                 .into_par_iter()
                 .zip(self.forrests.par_iter_mut())
                 .enumerate()
-                .for_each(|(i, (mut col, forest))| {
+                .map(|(i, (mut col, forest))| {
                     let left = cur.slice(ndarray::s![.., ..i]);
                     let right = cur.slice(ndarray::s![.., i + 1..]);
-                    let sliced = ndarray::concatenate(Axis(1), &[left, right]).unwrap();
+                    let sliced =
+                        ndarray::concatenate(Axis(1), &[left, right]).map_err(|err| Shape(err))?;
                     forest.fit(&sliced, cur.column(i));
                     col.assign(&forest.transform(&sliced));
-                });
+                    Ok(())
+                })
+                .collect();
+            res?;
             // for i in 0..ncols {
             //     let left  = cur.slice(ndarray::s![.., ..i]);
             //     let right = cur.slice(ndarray::s![.., i+1..]);
@@ -161,23 +167,28 @@ impl MissForest {
             std::mem::swap(&mut cur, &mut nxt); // free — just swaps pointers
         }
         // self.forrests = best_forests.clone();
-        self
+        Ok(self)
     }
-    fn impute(&self, data: &Array2<f64>) -> Array2<f64> {
-        let mut imputed = self.init.impute(data.view());
+
+    fn impute(&self, data: &Array2<f64>) -> Result<Array2<f64>, Errors> {
+        let mut imputed = self.init.impute(data.view())?;
         let static_imputed = imputed.clone();
-        imputed
+        let res: Result<(), Errors> = imputed
             .axis_iter_mut(Axis(1))
             .into_par_iter()
             .zip(self.forrests.par_iter())
             .enumerate()
-            .for_each(|(i, (mut col, forest))| {
+            .map(|(i, (mut col, forest))| {
                 let left = static_imputed.slice(ndarray::s![.., ..i]);
                 let right = static_imputed.slice(ndarray::s![.., i + 1..]);
-                let sliced = ndarray::concatenate(Axis(1), &[left, right]).unwrap();
+                let sliced =
+                    ndarray::concatenate(Axis(1), &[left, right]).map_err(|err| Shape(err))?;
                 col.assign(&forest.transform(&sliced));
-            });
-        imputed
+                Ok(())
+            })
+            .collect();
+        res?;
+        Ok(imputed)
     }
 
     fn calc_gamma(&self, old: ArrayView2<f64>, new: ArrayView2<f64>) -> f64 {
@@ -208,6 +219,7 @@ fn criterion_cat(n_miss: usize, old: &[u64], new: &[u64]) -> f64 {
 #[cfg(test)]
 mod test {
     use super::*;
+    use ndarray::Array1;
 
     #[test]
     fn num_perfect_imputation() {

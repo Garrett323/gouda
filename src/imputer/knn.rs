@@ -1,5 +1,7 @@
-use crate::utils::{self, SendPtr, StringEncoding};
+use crate::utils::Errors::NotFitted;
+use crate::utils::{self, Errors, SendPtr, StringEncoding};
 use ndarray::{Array2, ArrayView1, ArrayView2};
+use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes};
 use rayon::prelude::*;
@@ -122,19 +124,23 @@ impl KnnImputer {
     ) -> PyResult<Bound<'py, PyAny>> {
         // check if fitted
         if !self.is_fitted {
-            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
-                "Imputer is not fitted",
-            )));
+            return Err(PyTypeError::new_err(format!("Imputer is not fitted",)));
         }
         let (arr, out, enc) = utils::pyany_to_vec(data, &self.string_encoding)?;
         // actual method
-        utils::check_feature_mismatch(self.data.as_ref().unwrap().ncols(), arr.ncols())?;
+        utils::check_feature_mismatch(
+            self.data
+                .as_ref()
+                .ok_or(PyTypeError::new_err(format!("Imputer is not fitted",)))?
+                .ncols(),
+            arr.ncols(),
+        )?;
         let dist = match self.metric {
             Metrics::NanEuclid => Self::nan_euclid,
             Metrics::ExpectedDistance => Self::expected_distance,
             Metrics::Gower(_) => Self::gower,
         };
-        let imputed = self.brute_force(arr.view(), dist);
+        let imputed = self.brute_force(arr.view(), dist)?;
         // return python object
         utils::arr_to_out(py, &imputed, out, enc.as_ref())
     }
@@ -204,37 +210,47 @@ impl KnnImputer {
         &self,
         data: ArrayView2<f64>,
         dist: fn(&KnnImputer, ArrayView1<f64>, ArrayView1<f64>) -> f64,
-    ) -> Array2<f64> {
+    ) -> Result<Array2<f64>, utils::Errors> {
         let mut imputed = data.to_owned();
         let imp_ptr = std::sync::Arc::new(SendPtr(imputed.as_mut_ptr()));
-        let base = self.data.as_ref().unwrap();
-        (0..data.nrows()).into_par_iter().for_each(|row| {
-            let cols: Vec<usize> = (0..base.ncols())
-                .filter(|&j| data[(row, j)].is_nan())
-                .collect();
-            let p = data.row(row);
-            let distances: Vec<f64> = (0..base.nrows())
-                .into_par_iter()
-                .map(|r| dist(&self, p, base.row(r)))
-                .collect();
-            let mut indices: Vec<_> = (0..base.nrows()).collect();
-            indices.par_sort_unstable_by(|&a, &b| unsafe {
-                distances
-                    .get_unchecked(a)
-                    .total_cmp(&distances.get_unchecked(b))
-            });
-            let avgs = self.average(&indices, &cols, &self.get_weights(&distances));
-            for (avg, c) in avgs.into_iter().zip(&cols) {
-                unsafe {
-                    *imp_ptr.0.add(row * base.ncols() + c) = avg;
+        let base = self.data.as_ref().ok_or(utils::Errors::NotFitted)?;
+        let res: Result<(), Errors> = (0..data.nrows())
+            .into_par_iter()
+            .map(|row| {
+                let cols: Vec<usize> = (0..base.ncols())
+                    .filter(|&j| data[(row, j)].is_nan())
+                    .collect();
+                let p = data.row(row);
+                let distances: Vec<f64> = (0..base.nrows())
+                    .into_par_iter()
+                    .map(|r| dist(&self, p, base.row(r)))
+                    .collect();
+                let mut indices: Vec<_> = (0..base.nrows()).collect();
+                indices.par_sort_unstable_by(|&a, &b| unsafe {
+                    distances
+                        .get_unchecked(a)
+                        .total_cmp(&distances.get_unchecked(b))
+                });
+                let avgs = self.average(&indices, &cols, &self.get_weights(&distances))?;
+                for (avg, c) in avgs.into_iter().zip(&cols) {
+                    unsafe {
+                        *imp_ptr.0.add(row * base.ncols() + c) = avg;
+                    }
                 }
-            }
-        });
-        imputed
+                Ok(())
+            })
+            .collect();
+        res?;
+        Ok(imputed)
     }
 
-    fn average(&self, indices: &[usize], cols: &[usize], weights: &[f64]) -> Vec<f64> {
-        let base = self.data.as_ref().unwrap();
+    fn average(
+        &self,
+        indices: &[usize],
+        cols: &[usize],
+        weights: &[f64],
+    ) -> Result<Vec<f64>, Errors> {
+        let base = self.data.as_ref().ok_or(NotFitted)?;
         let avg = |&c: &usize| {
             let mut count = 0;
             let mut avg = 0.0;
@@ -253,9 +269,9 @@ impl KnnImputer {
                 }
             }
             if count == 0 {
-                f64::NAN
+                Ok(f64::NAN)
             } else {
-                avg / weight_sum
+                Ok(avg / weight_sum)
             }
         };
         if cols.len() > 100 {
