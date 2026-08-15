@@ -1,7 +1,7 @@
 use super::backend::{LinearRegression, LogisticRegression, PMM, Ridge, Solver};
 use crate::imputer::SimpleImputer;
 use crate::utils::{self, SendPtr, StringEncoding};
-use ndarray::{Array1, Array2, ArrayView2, Axis};
+use ndarray::{Array1, Array2, ArrayView2, Axis, ShapeError};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes};
@@ -72,7 +72,9 @@ impl Mice {
             } else {
                 inner.cat_columns = None;
             }
-            inner.fit_impl(arr.view());
+            inner
+                .fit_impl(arr.view())
+                .map_err(|err| PyValueError::new_err(format!("Got shape error: {}", err)))?;
             inner.is_fitted = true;
         } // dropping inner here (releasing the mutex)
         Ok(slf)
@@ -91,7 +93,9 @@ impl Mice {
         }
         let (arr, out, enc) = utils::pyany_to_vec(data, &self.string_encoding)?;
         utils::check_feature_mismatch(self.models.len(), arr.ncols())?;
-        let imputed = self.impute(arr.view());
+        let imputed = self
+            .impute(arr.view())
+            .map_err(|err| PyValueError::new_err(format!("Got shape error: {}", err)))?;
         // return python object
         utils::arr_to_out(py, &imputed, out, enc.as_ref())
     }
@@ -143,34 +147,35 @@ impl Mice {
 impl Mice {
     #[allow(unused)]
     fn linear(max_iter: usize) -> Self {
-        Self::new(max_iter, "linear", 0.0, "linear", None)
+        Self::new(max_iter, "linear", 0.0, "linear", None).unwrap()
     }
     #[allow(unused)]
     fn ridge(max_iter: usize, alpha: f64) -> Self {
-        Self::new(max_iter, "ridge", alpha, "linear", None)
+        Self::new(max_iter, "ridge", alpha, "linear", None).unwrap()
     }
     #[allow(unused)]
     fn pmm(max_iter: usize) -> Self {
-        Self::new(max_iter, "pmm", 1.0, "linear", None)
+        Self::new(max_iter, "pmm", 1.0, "linear", None).unwrap()
     }
 
-    fn impute(&self, data: ArrayView2<f64>) -> Array2<f64> {
+    fn impute(&self, data: ArrayView2<f64>) -> Result<Array2<f64>, ShapeError> {
         // initial mean imputation
         let mut imputed = self.init.impute(data.view());
         for _ in 0..self.max_iter {
-            let (predictions, missing_percolumn): (Vec<_>, Vec<_>) = (0..data.ncols())
+            let imputation_results: Result<(Vec<_>, Vec<_>), ShapeError> = (0..data.ncols())
                 .into_par_iter()
                 .map(|j| {
-                    let (_, x_test, _, missing_indices) = split((&imputed).view(), data, j);
-                    (self.models[j].predict(&x_test), missing_indices)
+                    let (_, x_test, _, missing_indices) = split((&imputed).view(), data, j)?;
+                    Ok((self.models[j].predict(&x_test), missing_indices))
                 })
                 .collect();
+            let (predictions, missing_percolumn) = imputation_results?;
             update_imputed(&mut imputed, predictions, missing_percolumn);
         }
-        imputed
+        Ok(imputed)
     }
 
-    fn fit_impl(&mut self, data: ArrayView2<f64>) -> &Self {
+    fn fit_impl(&mut self, data: ArrayView2<f64>) -> Result<&Self, ShapeError> {
         let mut imputed = self.init.fit_impl(data, None).impute(data);
         let mut models: Vec<_> = (0..data.ncols())
             .into_iter()
@@ -183,21 +188,22 @@ impl Mice {
             })
             .collect();
         for _ in 0..self.max_iter {
-            let (predictions, missing_percolumn): (Vec<_>, Vec<_>) = models
+            let fitresults: Result<(Vec<_>, Vec<_>), ShapeError> = models
                 .par_iter_mut()
                 .enumerate()
-                .map(|(j, m)| {
+                .map(|(j, m): (usize, &mut Solver)| {
                     let (x_train, x_test, y_train, missing_indices) =
-                        split((&imputed).into(), data, j);
+                        split((&imputed).into(), data, j)?;
                     m.fit(&x_train, &y_train);
-                    (m.predict(&x_test), missing_indices)
+                    Ok((m.predict(&x_test), missing_indices))
                 })
                 .collect();
+            let (predictions, missing_percolumn) = fitresults?;
             update_imputed(&mut imputed, predictions, missing_percolumn);
         }
         self._n_iter = self.max_iter;
         self.models = models;
-        self
+        Ok(self)
     }
 }
 
@@ -225,15 +231,14 @@ fn split(
     imputed: ArrayView2<f64>,
     missing: ArrayView2<f64>,
     col: usize,
-) -> (Array2<f64>, Array2<f64>, Array1<f64>, Vec<usize>) {
+) -> Result<(Array2<f64>, Array2<f64>, Array1<f64>, Vec<usize>), ndarray::ShapeError> {
     let x = ndarray::concatenate(
         Axis(1),
         &[
             imputed.slice(ndarray::s![.., ..col]),
             imputed.slice(ndarray::s![.., col + 1..]),
         ],
-    )
-    .expect("Failed concatenate views!");
+    )?;
     let y = missing.slice(ndarray::s![.., col]);
     // Build index lists
     let (missing_idx, observed_idx): (Vec<_>, Vec<_>) =
@@ -245,7 +250,7 @@ fn split(
     let x_train = x.select(Axis(0), &observed_idx);
     let x_test = x.select(Axis(0), &missing_idx);
     let y_train = y.select(Axis(0), &observed_idx);
-    (x_train, x_test, y_train, missing_idx)
+    Ok((x_train, x_test, y_train, missing_idx))
 }
 
 #[cfg(test)]
@@ -258,7 +263,11 @@ mod test {
         let simple = SimpleImputer::new(None)
             .fit_impl(data.view(), None)
             .impute(data.view());
-        let mice = Mice::linear(2).fit_impl(data.view()).impute(data.view());
+        let mice = Mice::linear(2)
+            .fit_impl(data.view())
+            .unwrap()
+            .impute(data.view())
+            .unwrap();
         let diff = simple.iter().zip(&mice).any(|(p, q)| (p - q).abs() > 1e-6);
         println!("Simple: \n{}\n", &simple);
         println!("Mice: \n{}\n", &mice);
@@ -270,8 +279,14 @@ mod test {
         let data = Array2::from_shape_vec((8, 4), POINTS.to_vec()).unwrap();
         let ridge = Mice::ridge(2, 1.0)
             .fit_impl(data.view())
-            .impute(data.view());
-        let lin = Mice::linear(2).fit_impl(data.view()).impute(data.view());
+            .unwrap()
+            .impute(data.view())
+            .unwrap();
+        let lin = Mice::linear(2)
+            .fit_impl(data.view())
+            .unwrap()
+            .impute(data.view())
+            .unwrap();
         let diff = ridge.iter().zip(&lin).any(|(p, q)| (p - q).abs() > 1e-6);
         println!("ridge: \n{}\n", &ridge);
         println!("linear: \n{}\n", &lin);
@@ -281,12 +296,20 @@ mod test {
     #[test]
     fn pmm() {
         let data = Array2::from_shape_vec((8, 4), POINTS.to_vec()).unwrap();
-        let pmm = Mice::pmm(2).fit_impl(data.view()).impute(data.view());
+        let pmm = Mice::pmm(2)
+            .fit_impl(data.view())
+            .unwrap()
+            .impute(data.view())
+            .unwrap();
         println!("ridge: \n{}\n", &pmm);
         for e in &pmm {
             assert!(!e.is_nan());
         }
-        let lin = Mice::linear(2).fit_impl(data.view()).impute(data.view());
+        let lin = Mice::linear(2)
+            .fit_impl(data.view())
+            .unwrap()
+            .impute(data.view())
+            .unwrap();
         let diff = pmm.iter().zip(&lin).any(|(p, q)| (p - q).abs() > 1e-6);
         assert!(diff, "Linear == PMM values :(");
     }

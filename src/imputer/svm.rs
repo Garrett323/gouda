@@ -1,10 +1,11 @@
 use crate::imputer::SimpleImputer;
 use crate::utils::{self, StringEncoding};
 use libsvm_rs::{
-    set_quiet, train, KernelType, SvmModel, SvmNode, SvmParameter, SvmParameterBuilder, SvmProblem,
-    SvmType,
+    KernelType, SvmError, SvmModel, SvmNode, SvmParameter, SvmParameterBuilder, SvmProblem,
+    SvmType, set_quiet, train,
 };
 use ndarray::{Array2, ArrayView1, ArrayView2};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes};
 use rayon::prelude::*;
@@ -15,7 +16,7 @@ use serde::{Deserialize, Serialize};
 pub struct SVMImputer {
     models: Vec<SvmModel>,
     string_encoding: Option<StringEncoding>,
-    _cat_cols: Vec<usize>,
+    cat_cols: Vec<usize>,
     num_cols: Vec<usize>,
     init: SimpleImputer,
     #[pyo3(get)]
@@ -31,8 +32,6 @@ impl SVMImputer {
     #[pyo3(signature = (kernel="linear", encoding=None))]
     pub fn new(kernel: &str, encoding: Option<&str>) -> PyResult<SVMImputer> {
         set_quiet(true);
-        // assert!(ALLOWED_WEIGHTS.contains(&weights));
-        // SVMImputer::sanity_check(&metric, &weights);
         Ok(SVMImputer {
             models: Vec::new(),
             is_fitted: false,
@@ -49,7 +48,7 @@ impl SVMImputer {
                     )));
                 }
             },
-            _cat_cols: Vec::new(),
+            cat_cols: Vec::new(),
             num_cols: Vec::new(),
             string_encoding: match encoding {
                 None => None,
@@ -71,9 +70,9 @@ impl SVMImputer {
                     .into_iter()
                     .filter(|idx| !indices.contains(idx))
                     .collect();
-                inner._cat_cols = indices;
+                inner.cat_cols = indices;
             }
-            inner.fit_model(arr.view());
+            inner.fit_model(arr.view()).map_err(PyValueError::new_err)?;
             inner.is_fitted = true;
         } // dropping inner here (releasing the mutex)
         Ok(slf)
@@ -141,7 +140,7 @@ impl SVMImputer {
         self.models = decoded.models;
         self.string_encoding = decoded.string_encoding;
         self.is_fitted = decoded.is_fitted;
-        self._cat_cols = decoded._cat_cols;
+        self.cat_cols = decoded.cat_cols;
         self.num_cols = decoded.num_cols;
         self.kernel = decoded.kernel;
         self.init = decoded.init;
@@ -150,27 +149,36 @@ impl SVMImputer {
 }
 
 impl SVMImputer {
-    fn fit_model(&mut self, arr: ArrayView2<f64>) -> &SVMImputer {
+    fn fit_model(&mut self, arr: ArrayView2<f64>) -> Result<&SVMImputer, String> {
         let imputed = self
             .init
             .fit_impl(
                 arr,
-                if self._cat_cols.len() == 0 {
+                if self.cat_cols.len() == 0 {
                     None
                 } else {
-                    Some(&self._cat_cols)
+                    Some(&self.cat_cols)
                 },
             )
             .impute(arr);
-        self.models = (0..arr.ncols())
+        self.models = Vec::with_capacity(arr.ncols());
+        let models: Vec<Result<SvmModel, SvmError>> = (0..arr.ncols())
             .into_par_iter()
             .map(|i| {
-                let training_params = self.get_model_params(i);
+                let training_params = self.get_model_params(i)?;
                 let problem = create_problem(imputed.view(), (i, arr.column(i)), false);
-                train::svm_train(&problem, &training_params)
+                Ok(train::svm_train(&problem, &training_params))
             })
             .collect();
-        self
+        for (col, m) in models.into_iter().enumerate() {
+            match m {
+                Ok(model) => self.models.push(model),
+                Err(e) => {
+                    return Err(format!("Unable to create SVM for column {}: {:?}", col, e));
+                }
+            }
+        }
+        Ok(self)
     }
     fn impute(&self, arr: ArrayView2<f64>) -> Array2<f64> {
         let initialized = self.init.impute(arr);
@@ -198,8 +206,8 @@ impl SVMImputer {
         output
     }
 
-    fn get_model_params(&self, target_column: usize) -> SvmParameter {
-        let svm_type = if self._cat_cols.len() > 0 && !self.num_cols.contains(&target_column) {
+    fn get_model_params(&self, target_column: usize) -> Result<SvmParameter, SvmError> {
+        let svm_type = if self.cat_cols.len() > 0 && !self.num_cols.contains(&target_column) {
             SvmType::CSvc
         } else {
             SvmType::EpsilonSvr
@@ -208,7 +216,6 @@ impl SVMImputer {
             .svm_type(svm_type)
             .kernel_type(self.kernel)
             .build()
-            .unwrap()
     }
 }
 fn create_problem(
