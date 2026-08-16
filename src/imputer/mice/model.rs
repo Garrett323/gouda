@@ -1,10 +1,8 @@
-use super::backend::{LinearRegression, LogisticRegression, PMM, Ridge, Solver};
+use super::backend::{LinearRegression, LogisticRegression, Ridge, Solver, PMM};
 use crate::imputer::SimpleImputer;
 use crate::utils::Errors::NotFitted;
 use crate::utils::{self, Errors, SendPtr, StringEncoding};
 use ndarray::{Array1, Array2, ArrayView2, Axis};
-use ndarray_linalg::error::LinalgError::Shape;
-use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes};
 use rayon::prelude::*;

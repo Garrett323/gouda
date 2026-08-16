@@ -1,6 +1,6 @@
 use crate::utils::Errors::{LinearAlgebra, NotFitted};
 use crate::utils::{Errors, SendPtr};
-use ndarray::{Array1, Array2, ArrayView1, Axis, ShapeError};
+use ndarray::{Array1, Array2, ArrayView1, Axis};
 use ndarray_linalg::{LeastSquaresSvd, SVD};
 use serde::{Deserialize, Serialize};
 
