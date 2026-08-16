@@ -1,10 +1,8 @@
 from typing import Literal
 from gouda.gouda import KnnImputerRS, SimpleImputerRS, ConstantImputerRS, SVMImputerRS, MiceRS
-from sklearn.impute._base import _BaseImputer
-from sklearn.base import TransformerMixin
+from sklearn.base import TransformerMixin, BaseEstimator
 from sklearn.exceptions import NotFittedError
 from sklearn.utils.validation import validate_data
-from sklearn.utils import Tags
 import numpy as np
 import pandas as pd
 
@@ -15,19 +13,14 @@ def imputer_tags(tags):
     return tags
 
 
-class KnnImputer(_BaseImputer, TransformerMixin):
+class KnnImputer(TransformerMixin, BaseEstimator):
     def __init__(self, *,
                  k: int = 5,
                  metric: Literal["nan_euclid", "gower",
                                  "expected_distance"] = "nan_euclid",
                  weights: Literal["uniform", "distance"] = "uniform",
                  encoding: None | Literal["label"] = None,
-                 missing_values=np.nan,
-                 add_indicator: bool = False,
-                 keep_empty_features: bool = False
                  ) -> None:
-        super().__init__(missing_values=missing_values,
-                         add_indicator=add_indicator, keep_empty_features=keep_empty_features)
         self.encoding = encoding
         self.metric = metric
         self.weights = weights
@@ -61,15 +54,10 @@ class KnnImputer(_BaseImputer, TransformerMixin):
         return imputer_tags(super().__sklearn_tags__())
 
 
-class SimpleImputer(_BaseImputer, TransformerMixin):
+class SimpleImputer(TransformerMixin, BaseEstimator):
     def __init__(self, *,
                  encoding: None | Literal["label"] = None,
-                 missing_values=np.nan,
-                 add_indicator: bool = False,
-                 keep_empty_features: bool = False
                  ) -> None:
-        super().__init__(missing_values=missing_values,
-                         add_indicator=add_indicator, keep_empty_features=keep_empty_features)
         self.encoding = encoding
         self._model = None
 
@@ -96,16 +84,11 @@ class SimpleImputer(_BaseImputer, TransformerMixin):
         return imputer_tags(super().__sklearn_tags__())
 
 
-class ConstantImputer(_BaseImputer, TransformerMixin):
+class ConstantImputer(TransformerMixin, BaseEstimator):
     def __init__(self, *,
                  value=0.0,
                  encoding: None | Literal["label"] = None,
-                 missing_values=np.nan,
-                 add_indicator: bool = False,
-                 keep_empty_features: bool = False
                  ) -> None:
-        super().__init__(missing_values=missing_values,
-                         add_indicator=add_indicator, keep_empty_features=keep_empty_features)
         self.value = value
         self.encoding = encoding
         self._model = None
@@ -133,24 +116,18 @@ class ConstantImputer(_BaseImputer, TransformerMixin):
         return imputer_tags(super().__sklearn_tags__())
 
 
-class SVMImputer(_BaseImputer, TransformerMixin):
+class SVMImputer(TransformerMixin, BaseEstimator):
     def __init__(self, *,
-                 kernel: Literal["linear", "rbf", "polynomial",
-                                 "sigmoid", "precomputed"] = "linear",
+                 kernel: Literal["linear", "rbf", "polynomial", "sigmoid"] = "linear",
                  encoding: None | Literal["label"] = None,
-                 missing_values=np.nan,
-                 add_indicator: bool = False,
-                 keep_empty_features: bool = False
                  ) -> None:
-        super().__init__(missing_values=missing_values,
-                         add_indicator=add_indicator, keep_empty_features=keep_empty_features)
         self.kernel = kernel
         self.encoding = encoding
         self._model = None
 
     def fit(self, X, y=None):
-        self._model = SVMImputerRS(kernel=self.kernel, encoding=self.encoding)
         X = validate_data(self, X, dtype=None, ensure_all_finite="allow-nan")
+        self._model = SVMImputerRS(kernel=self.kernel, encoding=self.encoding)
         self._model.fit(X)
         return self
 
@@ -171,19 +148,14 @@ class SVMImputer(_BaseImputer, TransformerMixin):
         return imputer_tags(super().__sklearn_tags__())
 
 
-class Mice(_BaseImputer, TransformerMixin):
+class Mice(TransformerMixin, BaseEstimator):
     def __init__(self, *,
                  max_iter: int = 10,
                  backend: Literal["linear", "ridge", "pmm"] = "linear",
                  alpha: float = 1.0,
                  pmm_backend: Literal["linear", "ridge"] = "linear",
                  encoding: None | Literal["label"] = None,
-                 missing_values=np.nan,
-                 add_indicator: bool = False,
-                 keep_empty_features: bool = False
                  ) -> None:
-        super().__init__(missing_values=missing_values,
-                         add_indicator=add_indicator, keep_empty_features=keep_empty_features)
         self.max_iter = max_iter
         self.backend = backend
         self.alpha = alpha
