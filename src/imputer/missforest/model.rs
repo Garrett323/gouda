@@ -2,6 +2,7 @@ use super::super::SimpleImputer;
 use crate::{
     imputer::missforest::backend::{self, RandomForest},
     utils::{
+        self,
         Errors::{self, Shape},
         StringEncoding, arr_to_out,
         constants::{ENCODING_WARN, NOT_FITTED_ERR},
@@ -35,26 +36,23 @@ impl MissForest {
         min_samples_leaf: usize,
         seed: Option<u64>,
         encoding: Option<&str>,
-    ) -> MissForest {
+    ) -> PyResult<MissForest> {
         let rng = if let Some(x) = seed {
             StdRng::seed_from_u64(x)
         } else {
             let mut rng = rand::rng();
             StdRng::seed_from_u64(rng.random())
         };
-        MissForest {
+        Ok(MissForest {
             n_trees,
             is_fitted: false,
-            init: SimpleImputer::new(encoding),
+            init: SimpleImputer::new(encoding)?,
             forrests: Vec::new(),
             rng,
             max_depth,
             min_samples_leaf,
-            string_encoding: match encoding {
-                None => None,
-                Some(_) => Some(StringEncoding::LabelEncoding),
-            },
-        }
+            string_encoding: utils::process_labelencoding(encoding)?,
+        })
     }
 
     pub fn fit(slf: Py<Self>, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {

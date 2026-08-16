@@ -20,16 +20,13 @@ pub struct SimpleImputer {
 impl SimpleImputer {
     #[new]
     #[pyo3(signature = (encoding=None))]
-    pub fn new(encoding: Option<&str>) -> SimpleImputer {
-        SimpleImputer {
+    pub fn new(encoding: Option<&str>) -> PyResult<SimpleImputer> {
+        Ok(SimpleImputer {
             sample_means: None,
             // sample_mode: None,
-            string_encoding: match encoding {
-                Some(_) => Some(StringEncoding::LabelEncoding),
-                None => None,
-            },
+            string_encoding: utils::process_labelencoding(encoding)?,
             is_fitted: false,
-        }
+        })
     }
 
     pub fn fit(slf: Py<Self>, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
@@ -206,7 +203,7 @@ mod tests {
 
     #[test]
     fn test_impute() {
-        let mut simple = SimpleImputer::new(None);
+        let mut simple = SimpleImputer::new(None).unwrap();
         let data = Array2::from_shape_vec((5, 5), DATA.to_owned()).unwrap();
         let imputed = simple
             .fit_impl(data.view(), None)
@@ -238,7 +235,7 @@ mod tests {
             (0.9573324 + 0.98189233 + 0.50595314 + 0.62366235) / 4.0,
             (0.45384631 + 0.5011135 + 0.12229672) / 3.0,
         ];
-        let mut simple = SimpleImputer::new(None);
+        let mut simple = SimpleImputer::new(None).unwrap();
         let data = Array2::from_shape_vec((5, 5), DATA.to_owned()).unwrap();
         simple.fit_impl(data.view(), None).unwrap();
         for (gt, estimate) in MEANS.iter().zip(simple.sample_means.as_ref().unwrap()) {

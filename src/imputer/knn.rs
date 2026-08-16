@@ -1,7 +1,6 @@
 use crate::utils::Errors::NotFitted;
 use crate::utils::{self, Errors, SendPtr, StringEncoding};
 use ndarray::{Array2, ArrayView1, ArrayView2};
-use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes};
 use rayon::prelude::*;
@@ -56,33 +55,29 @@ impl KnnImputer {
                 "expected_distance" => Metrics::ExpectedDistance,
                 "gower" => Metrics::Gower(None),
                 s => {
-                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                        "Metric parameter [{}] not supported, supported metrics: {:?}",
-                        s, ALLOWED_METRICS
-                    )));
+                    return Err(Errors::UnsupportedValue {
+                        parameter: "Knn.Metric",
+                        value: s.to_owned(),
+                        supported: Some(ALLOWED_METRICS),
+                    }
+                    .into());
                 }
             },
             weights: match weights.to_lowercase().as_str() {
                 "uniform" => Weights::Uniform,
                 "distance" => Weights::Distance,
                 s => {
-                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                        "Weight parameter [{}] not supported, supported weights: {:?}",
-                        s, ALLOWED_WEIGHTS
-                    )));
+                    return Err(Errors::UnsupportedValue {
+                        parameter: "Knn.Weights",
+                        value: s.to_owned(),
+                        supported: Some(ALLOWED_WEIGHTS),
+                    }
+                    .into());
                 }
             },
             cat_cols: None,
             num_cols: None,
-            string_encoding: match encoding {
-                None => None,
-                Some("label") => Some(StringEncoding::LabelEncoding),
-                Some(value) => {
-                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                        "Unsupported encoding {value:?}; expected 'label' or None"
-                    )));
-                }
-            },
+            string_encoding: utils::process_labelencoding(encoding)?,
         })
     }
 
@@ -124,21 +119,19 @@ impl KnnImputer {
     ) -> PyResult<Bound<'py, PyAny>> {
         // check if fitted
         if !self.is_fitted {
-            return Err(PyTypeError::new_err(format!("Imputer is not fitted",)));
+            return Err(Errors::NotFitted.into());
+            // return Err(PyTypeError::new_err(format!("Imputer is not fitted",)));
         }
         let (arr, out, enc) = utils::pyany_to_vec(data, &self.string_encoding)?;
         // actual method
-        utils::check_feature_mismatch(
-            self.data
-                .as_ref()
-                .ok_or(PyTypeError::new_err(format!("Imputer is not fitted",)))?
-                .ncols(),
-            arr.ncols(),
-        )?;
+        utils::check_feature_mismatch(self.data.as_ref().ok_or(NotFitted)?.ncols(), arr.ncols())?;
         let dist = match self.metric {
             Metrics::NanEuclid => Self::nan_euclid,
             Metrics::ExpectedDistance => Self::expected_distance,
-            Metrics::Gower(_) => Self::gower,
+            Metrics::Gower(None) => {
+                return Err(Errors::NotFitted.into());
+            }
+            Metrics::Gower(Some(_)) => Self::gower,
         };
         let imputed = self.brute_force(arr.view(), dist)?;
         // return python object
@@ -351,10 +344,12 @@ impl KnnImputer {
     }
 
     fn gower(&self, a: ArrayView1<f64>, b: ArrayView1<f64>) -> f64 {
+        // These panics are intentional; it should not be possible to trigger this from the api
         let ranges = if let Metrics::Gower(v) = &self.metric {
-            v.as_ref().unwrap().as_slice()
+            v.as_ref()
+                .expect("Make sure to call fit first, or provide ranges any other way!")
+                .as_slice()
         } else {
-            // This panic is intentional; it should not be possible to trigger this from the api
             panic!("Set distance to gower when calling gower!");
         };
         let mut total = 0.0;
@@ -400,7 +395,9 @@ mod tests {
         // With distances 1 and 3, the weighted mean is:
         // (10 / 1 + 20 / 3) / (1 / 1 + 1 / 3) = 12.5.
         let distances = [1.0, 3.0];
-        let actual = knn.average(&[0, 1], &[0], &knn.get_weights(&distances))[0];
+        let actual = knn
+            .average(&[0, 1], &[0], &knn.get_weights(&distances))
+            .unwrap()[0];
 
         assert!((actual - 12.5).abs() < 1e-12, "actual: {actual}");
     }

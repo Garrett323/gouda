@@ -41,19 +41,18 @@ impl SVMImputer {
                 "polynomial" => KernelType::Polynomial,
                 // "precomputed" => KernelType::Precomputed,
                 value => {
-                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                        "kernel parameter [{}] not supported, {:?}",
-                        value, ALLOWED_KERNELS
-                    )));
+                    return Err(Errors::UnsupportedValue {
+                        parameter: "SVM.Kernel",
+                        value: value.to_owned(),
+                        supported: Some(ALLOWED_KERNELS),
+                    }
+                    .into());
                 }
             },
             cat_cols: Vec::new(),
             num_cols: Vec::new(),
-            string_encoding: match encoding {
-                None => None,
-                Some(_) => Some(StringEncoding::LabelEncoding),
-            },
-            init: SimpleImputer::new(encoding),
+            string_encoding: utils::process_labelencoding(encoding)?,
+            init: SimpleImputer::new(encoding)?,
         })
     }
 
@@ -199,7 +198,7 @@ impl SVMImputer {
             }
             // Build one prediction instance for each missing row.
             let problem = create_problem(initialized.view(), (column, target), true);
-            assert_eq!(missing_rows.len(), problem.instances.len(),);
+            debug_assert_eq!(missing_rows.len(), problem.instances.len(),);
             for (row, instance) in missing_rows.into_iter().zip(problem.instances.iter()) {
                 let prediction = libsvm_rs::predict::predict(&self.models[column], instance);
                 output[(row, column)] = prediction;

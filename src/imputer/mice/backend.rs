@@ -1,6 +1,6 @@
 use crate::utils::Errors::{LinearAlgebra, NotFitted};
 use crate::utils::{Errors, SendPtr};
-use ndarray::{Array1, Array2, ArrayView1, Axis};
+use ndarray::{Array1, Array2, ArrayView1, Axis, ShapeError};
 use ndarray_linalg::{LeastSquaresSvd, SVD};
 use serde::{Deserialize, Serialize};
 
@@ -116,10 +116,16 @@ impl Ridge {
         })?; // original mean, keep this
         let data = data - &x_mean;
 
-        let (u, e, v) = data.svd(true, true).unwrap();
-        let u = u.unwrap();
+        let (u, e, v) = data
+            .svd(true, true)
+            .map_err(|err| Errors::LinearAlgebra(err))?;
+        let u = u.ok_or(Errors::NoValidOp {
+            operation: "Failed SVD decomposition!".to_string(),
+        })?;
         let u = u.slice(ndarray::s![.., ..e.len()]);
-        let v = v.unwrap();
+        let v = v.ok_or(Errors::NoValidOp {
+            operation: "Failed SVD decomposition!".to_string(),
+        })?;
         let v = v.slice(ndarray::s![..e.len(), ..]);
 
         let d = &e / (&e.mapv(|x| x * x) + self.alpha);
@@ -127,9 +133,12 @@ impl Ridge {
         let mut beta = v.t().dot(&(d * uty));
 
         if self.bias {
-            let y_mean = target.mean().unwrap(); // move up here too
+            let y_mean = target.mean().ok_or(Errors::NoValidOp {
+                operation: "Computing mean on empty list!".to_string(),
+            })?; // move up here too
             let intercept = Array1::from_elem(1, y_mean - x_mean.dot(&beta));
-            beta = ndarray::concatenate(Axis(0), &[intercept.view(), beta.view()]).unwrap();
+            beta = ndarray::concatenate(Axis(0), &[intercept.view(), beta.view()])
+                .map_err(|err| Errors::Shape(err))?;
         }
 
         self.coefficients = Some(beta);
@@ -141,7 +150,7 @@ impl Regressor for Ridge {
         self.bias
     }
     fn coefficients(&self) -> Option<ArrayView1<'_, f64>> {
-        Some(self.coefficients.as_ref().unwrap().view())
+        Some(self.coefficients.as_ref()?.view())
     }
 }
 
@@ -172,7 +181,7 @@ impl Regressor for LinearRegression {
         self.bias
     }
     fn coefficients(&self) -> Option<ArrayView1<'_, f64>> {
-        Some(self.coefficients.as_ref().unwrap().view())
+        Some(self.coefficients.as_ref()?.view())
     }
 }
 
@@ -286,13 +295,20 @@ impl PMM {
     }
 
     fn sample(&self, arr: &[f64]) -> f64 {
-        let mut rng = self.rng.lock().unwrap();
+        if arr.is_empty() {
+            return f64::NAN;
+        }
+        let mut rng = self
+            .rng
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         arr.choose(&mut rng).unwrap().clone()
     }
-
+    #[allow(dead_code)]
     fn bias(&self) -> bool {
         self.model.bias()
     }
+    #[allow(dead_code)]
     fn coefficients(&self) -> Option<ArrayView1<'_, f64>> {
         self.model.coefficients()
     }

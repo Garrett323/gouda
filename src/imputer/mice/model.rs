@@ -1,7 +1,9 @@
 use super::backend::{LinearRegression, LogisticRegression, PMM, Ridge, Solver};
 use crate::imputer::SimpleImputer;
+use crate::utils::Errors::NotFitted;
 use crate::utils::{self, Errors, SendPtr, StringEncoding};
 use ndarray::{Array1, Array2, ArrayView2, Axis};
+use ndarray_linalg::error::LinalgError::Shape;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes};
@@ -51,12 +53,9 @@ impl Mice {
             cat_backend: Solver::Logistic(LogisticRegression::new()),
             models: Vec::new(),
             is_fitted: false,
-            string_encoding: match encoding {
-                None => None,
-                Some(_) => Some(StringEncoding::LabelEncoding),
-            },
+            string_encoding: utils::process_labelencoding(encoding)?,
             cat_columns: None,
-            init: SimpleImputer::new(encoding),
+            init: SimpleImputer::new(encoding)?,
         })
     }
 
@@ -83,15 +82,11 @@ impl Mice {
     ) -> PyResult<Bound<'py, PyAny>> {
         // check if fitted
         if !self.is_fitted {
-            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
-                "Imputer is not fitted",
-            )));
+            return Err(NotFitted.into());
         }
         let (arr, out, enc) = utils::pyany_to_vec(data, &self.string_encoding)?;
         utils::check_feature_mismatch(self.models.len(), arr.ncols())?;
-        let imputed = self
-            .impute(arr.view())
-            .map_err(|err| PyValueError::new_err(format!("Got shape error: {}", err)))?;
+        let imputed = self.impute(arr.view())?;
         // return python object
         utils::arr_to_out(py, &imputed, out, enc.as_ref())
     }
@@ -258,6 +253,7 @@ mod test {
     fn move_away_from_initial() {
         let data = Array2::from_shape_vec((8, 4), POINTS.to_vec()).unwrap();
         let simple = SimpleImputer::new(None)
+            .unwrap()
             .fit_impl(data.view(), None)
             .unwrap()
             .impute(data.view())
