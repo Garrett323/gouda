@@ -24,4 +24,5 @@ except (ImportError, ModuleNotFoundError):
 
 
 __all__ = ["KnnImputer", "SimpleImputer", "ConstantImputer",
-           "Mice", "MissForest", "SVMImputer", "GAIN", "Imputers"]
+           # "MissForest",
+           "Mice", "SVMImputer", "GAIN", "Imputers"]
