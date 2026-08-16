@@ -26,6 +26,7 @@ seeds:
 missing_mechanism:
 no_cat: False
 n_repetitions: 20
+n_warmups: 1
 ---
 name: simple 
 model: simple
@@ -44,20 +45,11 @@ model_params:
   metric: gower
 
 ---
-name: missforest
-model: missforest
-missing_mechanism: mcar
-model_params: 
-  n_trees: 20
-  max_depth: 20
-  # min_samples_leaf: 3
-  encoding: label
-
----
 name: svm
 model: svm
 missing_mechanism: mcar
-kernel: rbf
+model_params:
+  kernel: rbf
 
 ---
 name: gain

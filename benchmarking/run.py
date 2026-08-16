@@ -1,217 +1,349 @@
-import yaml
-import numpy as np
-import os
-import pandas as pd
+"""Reproducible benchmark runner for Gouda and reference imputers.
+
+The runner writes one raw row per seed/repetition and a tidy summary.  Raw
+measurements are deliberately retained so journal figures and statistical
+analyses do not have to reconstruct observations from means and standard
+deviations.
+"""
+
+from __future__ import annotations
+
 import argparse
-from ucimlrepo import fetch_ucirepo
-from collections.abc import Generator
-from gouda import *
-from swiss_cheese import MCAR, MAR, MNAR
-from sklearn.experimental import enable_iterative_imputer
-from sklearn.impute import IterativeImputer, KNNImputer as KNNsk
-from missforest import MissForest as MissForestPy
+import gc
+import importlib.metadata
+import json
+import os
+import platform
+import socket
+import subprocess
+import sys
 import time
+from collections.abc import Generator, Mapping
+from copy import deepcopy
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pandas as pd
+import yaml
+from sklearn.experimental import enable_iterative_imputer  # noqa: F401
+from sklearn.impute import IterativeImputer, KNNImputer as KNNsk
+from ucimlrepo import fetch_ucirepo
+
+from gouda import KnnImputer, Mice, SVMImputer, SimpleImputer
 
 
-class Experiment:
-    def __init__(self, params, defaults) -> None:
-        self.process(params, defaults)
-        self.name = params["name"]
-        self.model = get_model(params["model"])
-        assert self.params["missing_mechanism"] is not None, \
-            "provide a missingness mechanism"
-        if self.params.get("model_params") is None:
-            self.params["model_params"] = {}
+HERE = Path(__file__).resolve().parent
+DEFAULT_CONFIG = HERE / "config.yaml"
+DEFAULT_OUTPUT = HERE / "results"
+MODEL_REGISTRY = {
+    "mice": Mice,
+    "knn": KnnImputer,
+    "svm": SVMImputer,
+    "knn-sk": KNNsk,
+    "simple": SimpleImputer,
+    # Gouda's MissForest is intentionally excluded until its observed-value
+    # corruption bug is fixed. Keeping an invalid method in a paper benchmark
+    # would produce misleading accuracy and timing results.
+    "iterative": IterativeImputer,
+}
 
-    def process(self, params, defaults):
-        self.params = _deep_update(defaults, params)
 
-    def run(self):
-        error = {}
-        times = {}
-        for ds in self.params["datasets"]:
-            print(f"Processing {ds}")
-            df = self.fetch_data(ds)
-            if not self.supports_cat():
-                print(f"skipping.. {self.current_dataset}")
-                continue
-            error[self.current_dataset] = {}
-            times[self.current_dataset] = {}
-            for p in self.params["missing_rates"]:
-                errors = []
-                fits = []
-                imputes = []
-                for seed in self.params["seeds"]:
-                    missing, mask = self.make_missing(df, p, seed)
-                    _warmup = self.model(**self.params["model_params"]).fit(missing).transform(missing)
-                    for _ in range(self.params["n_repetitions"]):
-                        start = time.perf_counter_ns()
-                        model = self.model(
-                            **self.params["model_params"]).fit(missing)
-                        fits.append(time.perf_counter_ns() - start)
-                        start = time.perf_counter_ns()
-                        imputed = model.transform(missing)
-                        imputes.append(time.perf_counter_ns() - start)
-                    errors.append(self.compute_error(df, imputed, mask))
-                self.add_metrics(p, error, times, errors, fits, imputes)
-        self.to_disk(error, times)
-
-    def make_missing(self, data, missing_rate, seed=None):
-        match self.params["missing_mechanism"]:
-            case "mcar":
-                missing = MCAR(random_seed=seed)(data, missing_rate)
-            case "mnar":
-                missing = MNAR(**self.params["missing_params"], random_seed=seed)(data, missing_rate)
-            case "mar":
-                missing = MAR(**self.params["missing_params"], random_seed=seed)(data, missing_rate)
-            case _:
-                raise NotImplementedError
-        return missing, missing.isna()
-
-    def compute_error(self, ground_truth, imputed, missing_mask) -> float:
-        if self.only_num:
-            col_min = ground_truth.min()
-            col_max = ground_truth.max()
-            gt = (ground_truth - col_min) / (col_max - col_min)
-            imputed = pd.DataFrame(imputed, columns=gt.columns, index=gt.index)
-            imputed = (imputed - col_min) / (col_max - col_min)
-            nmse_error = ((gt[missing_mask] - imputed[missing_mask]) ** 2).mean().mean()
-            return nmse_error
-
-        if not self.num_cols.empty:
-            # compute numerical error
-            num_gt = ground_truth[self.num_cols]
-            num_imputed = imputed[self.num_cols]
-            # range normalize
-            col_min = num_gt.min()
-            col_max = num_gt.max()
-            num_gt = ground_truth[missing_mask][self.num_cols]
-            num_imputed = imputed[missing_mask][self.num_cols]
-            num_gt = (num_gt - col_min) / (col_max - col_min)
-            num_imputed = (num_imputed - col_min) / (col_max - col_min)
-            nmse_error = ((num_gt - num_imputed) ** 2).mean().mean()
+def _deep_update(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
+    result = deepcopy(dict(base))
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_update(result[key], value)
         else:
-            nmse_error = 0.0
-
-        if not self.cat_cols.empty:
-            # compute categorical error
-            cat_gt = ground_truth[missing_mask][self.cat_cols]
-            cat_imputed = imputed[missing_mask][self.cat_cols]
-            mask = cat_gt == cat_imputed
-            cat_error = 1.0 - (mask.sum().sum() / mask.size)
-        else:
-            cat_error = 0.0
-
-        return cat_error + nmse_error
-
-    def to_disk(self, error, times):
-        os.makedirs(path := f"Results/{self.name}", exist_ok=True)
-        with open(f"{path}/error.yaml", "w") as f:
-            yaml.dump(error, f)
-        with open(f"{path}/timing.yaml", "w") as f:
-            yaml.dump(times, f)
-
-    def fetch_data(self, id: int):
-        data = fetch_ucirepo(id=id)
-        self.current_dataset = data["metadata"]["name"]
-        df: pd.DataFrame = data["data"]["features"]
-        self.num_cols = df.select_dtypes(include="number").columns
-        self.cat_cols = df.select_dtypes(exclude="number").columns
-        self.only_num = self.cat_cols.empty
-        return df
-
-    def add_metrics(self, p, error, times, seed_errors, fit_times, impute_times):
-        error[self.current_dataset][p] = {
-            "mean": float(np.mean(seed_errors)),
-            "std": float(np.std(seed_errors, ddof=1))
-        }
-
-        total_time = np.array(fit_times) + np.array(impute_times)
-        times[self.current_dataset][p] = {
-            "fit": {
-                "mean": float(np.mean(fit_times)),
-                "median": float(np.median(fit_times)),
-                "std": float(np.std(fit_times, ddof=1))
-            },
-            "impute": {
-                "mean": float(np.mean(impute_times)),
-                "median": float(np.median(impute_times)),
-                "std": float(np.std(impute_times, ddof=1))
-            },
-            "total": {
-                "mean": float(np.mean(total_time)),
-                "median": float(np.median(total_time)),
-                "std": float(np.std(total_time, ddof=1))
-            }
-        }
-
-
-    def supports_cat(self):
-        if self.params["no_cat"] and not self.only_num:
-            return False
-        return True
-
-
-def _deep_update(base, override):
-    result = base.copy()
-    for k, v in override.items():
-        if (
-            k in result
-            and isinstance(result[k], dict)
-            and isinstance(v, dict)
-        ):
-            result[k] = _deep_update(result[k], v)
-        else:
-            result[k] = v
+            result[key] = deepcopy(value)
     return result
 
 
-def make_experiments(path: str) -> Generator[Experiment]:
-    with open(path, "r") as f:
-        conf = yaml.safe_load_all(f)
-        default = next(conf)
-    return (Experiment(defaults=default, params=c) for c in conf)
+def make_experiments(path: Path) -> Generator[dict[str, Any], None, None]:
+    with path.open(encoding="utf-8") as handle:
+        documents = list(yaml.safe_load_all(handle))
+    if len(documents) < 2:
+        raise ValueError("Configuration needs one defaults document and at least one experiment")
+    defaults = documents[0]
+    for experiment in documents[1:]:
+        if experiment:
+            yield _deep_update(defaults, experiment)
 
 
-def get_model(model):
-    MODELS = {
-        "mice": Mice,
-        "knn": KnnImputer,
-        "svm": SVMImputer,
-        "gain": GAIN,
-        "knn-sk": KNNsk,
-        "simple": SimpleImputer,
-        "missforest": MissForest,
-        "missforest-py": MissForestPy,
-        "iterative": IterativeImputer,
-    }
+def get_model(name: str):
+    if name == "gain":
+        try:
+            from gouda import GAIN
+        except ImportError as exc:
+            raise RuntimeError("GAIN benchmarks require: uv sync --extra deep") from exc
+        return GAIN
+    if name == "missforest-py":
+        try:
+            from missforest import MissForest as MissForestPy
+        except ImportError as exc:
+            raise RuntimeError("missforest-py benchmarks require the benchmark development dependencies") from exc
+        return MissForestPy
     try:
-        return MODELS[model]
-    except KeyError:
-        raise ValueError(f"Unknown model: [{model}]")
+        return MODEL_REGISTRY[name]
+    except KeyError as exc:
+        choices = ", ".join(sorted([*MODEL_REGISTRY, "gain", "missforest-py"]))
+        raise ValueError(f"Unknown model {name!r}; choose one of: {choices}") from exc
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="")
-    parser.add_argument(
-        "-e",
-        nargs="+",        # accepts one or more values
-        metavar="ARG",
-        help="List of experiments"
+def _safe_std(values: pd.Series) -> float:
+    if len(values) == 0:
+        return np.nan
+    return float(values.std(ddof=1)) if len(values) > 1 else 0.0
+
+
+def _summary(raw: pd.DataFrame) -> pd.DataFrame:
+    """Summarise independent seeds; repetitions are first reduced per seed."""
+    keys = [
+        "experiment", "model", "dataset_id", "dataset", "n_rows", "n_features",
+        "mechanism", "missing_rate",
+    ]
+    per_seed = (
+        raw.groupby(keys + ["seed"], as_index=False, dropna=False)
+        .agg(
+            numerical_nrmse=("numerical_nrmse", "first"),
+            categorical_pfc=("categorical_pfc", "first"),
+            missing_fraction=("missing_fraction", "first"),
+            fit_seconds=("fit_seconds", "median"),
+            transform_seconds=("transform_seconds", "median"),
+            total_seconds=("total_seconds", "median"),
+        )
     )
+    rows: list[dict[str, Any]] = []
+    metrics = [
+        "numerical_nrmse",
+        "categorical_pfc",
+        "missing_fraction",
+        "fit_seconds",
+        "transform_seconds",
+        "total_seconds",
+    ]
+    for group_values, group in per_seed.groupby(keys, dropna=False, sort=False):
+        base = dict(zip(keys, group_values))
+        base["n_seeds"] = int(group["seed"].nunique())
+        for metric in metrics:
+            values = group[metric].dropna()
+            base[f"{metric}_mean"] = float(values.mean()) if len(values) else np.nan
+            base[f"{metric}_std"] = _safe_std(values)
+            base[f"{metric}_median"] = float(values.median()) if len(values) else np.nan
+        rows.append(base)
+    return pd.DataFrame(rows).sort_values(keys).reset_index(drop=True)
+
+
+class Experiment:
+    def __init__(self, params: dict[str, Any], output_dir: Path) -> None:
+        self.params = params
+        self.name = str(params["name"])
+        self.model_name = str(params["model"])
+        self.model = get_model(self.model_name)
+        self.output_dir = output_dir
+        if params.get("missing_mechanism") not in {"mcar", "mar", "mnar"}:
+            raise ValueError(f"{self.name}: missing_mechanism must be mcar, mar, or mnar")
+        self.model_params = params.get("model_params") or {}
+
+    def run(self) -> pd.DataFrame:
+        rows: list[dict[str, Any]] = []
+        for dataset_id in self.params["datasets"]:
+            ground_truth, dataset_name = self.fetch_data(int(dataset_id))
+            if self.params.get("no_cat", False) and self._has_categoricals(ground_truth):
+                print(f"[{self.name}] skipping mixed dataset {dataset_name!r}")
+                continue
+            print(f"[{self.name}] {dataset_name}")
+            for rate in self.params["missing_rates"]:
+                for seed in self.params["seeds"]:
+                    missing, mask = self.make_missing(ground_truth, float(rate), int(seed))
+                    for _ in range(int(self.params.get("n_warmups", 1))):
+                        self._new_model(int(seed)).fit(missing).transform(missing)
+
+                    seed_timings: list[tuple[float, float]] = []
+                    imputed = None
+                    for repetition in range(int(self.params["n_repetitions"])):
+                        gc.collect()
+                        gc.disable()
+                        try:
+                            start = time.perf_counter_ns()
+                            fitted = self._new_model(int(seed)).fit(missing)
+                            fit_ns = time.perf_counter_ns() - start
+                            start = time.perf_counter_ns()
+                            candidate = fitted.transform(missing)
+                            transform_ns = time.perf_counter_ns() - start
+                        finally:
+                            gc.enable()
+                        self.validate_output(ground_truth, candidate, mask)
+                        if imputed is None:
+                            imputed = candidate
+                        seed_timings.append((fit_ns / 1e9, transform_ns / 1e9))
+
+                    metrics = self.compute_metrics(ground_truth, imputed, mask)
+                    for repetition, (fit_s, transform_s) in enumerate(seed_timings):
+                        rows.append({
+                            "experiment": self.name,
+                            "model": self.model_name,
+                            "dataset_id": int(dataset_id),
+                            "dataset": dataset_name,
+                            "n_rows": int(ground_truth.shape[0]),
+                            "n_features": int(ground_truth.shape[1]),
+                            "mechanism": self.params["missing_mechanism"],
+                            "missing_rate": float(rate),
+                            "missing_fraction": float(mask.to_numpy().mean()),
+                            "seed": int(seed),
+                            "repetition": repetition,
+                            "fit_seconds": fit_s,
+                            "transform_seconds": transform_s,
+                            "total_seconds": fit_s + transform_s,
+                            **metrics,
+                        })
+        return pd.DataFrame(rows)
+
+    def _new_model(self, seed: int):
+        """Construct a model and seed it when its sklearn API exposes a seed."""
+        model = self.model(**self.model_params)
+        if hasattr(model, "get_params") and hasattr(model, "set_params"):
+            available = model.get_params(deep=False)
+            if "random_state" in available and "random_state" not in self.model_params:
+                model.set_params(random_state=seed)
+        return model
+
+    def fetch_data(self, dataset_id: int) -> tuple[pd.DataFrame, str]:
+        data = fetch_ucirepo(id=dataset_id)
+        frame = data["data"]["features"].copy()
+        return frame, str(data["metadata"]["name"])
+
+    def make_missing(self, data: pd.DataFrame, rate: float, seed: int):
+        mechanism = self.params["missing_mechanism"]
+        mechanism_params = self.params.get("missing_params") or {}
+        try:
+            from swiss_cheese import MAR, MNAR, MCAR
+        except (ImportError, SyntaxError) as exc:
+            raise RuntimeError(
+                "Missing value generation does require a swiss-cheese version compatible with this Python; "
+            ) from exc
+        factory = {"mar": MAR, "mnar": MNAR, "mcar": MCAR}[mechanism]
+        missing = factory(**mechanism_params, random_seed=seed)(data.copy(), rate)
+        mask = missing.isna() & data.notna()
+        if not mask.to_numpy().any():
+            raise RuntimeError(f"No values were removed for rate={rate}, seed={seed}")
+        return missing, mask
+
+    @staticmethod
+    def _has_categoricals(data: pd.DataFrame) -> bool:
+        return len(data.select_dtypes(exclude="number").columns) > 0
+
+    @staticmethod
+    def validate_output(ground_truth: pd.DataFrame, imputed: Any, mask: pd.DataFrame) -> None:
+        output = pd.DataFrame(imputed, index=ground_truth.index, columns=ground_truth.columns)
+        if output.shape != ground_truth.shape:
+            raise ValueError(f"Imputer changed shape from {ground_truth.shape} to {output.shape}")
+        observed = ~mask
+        numeric = ground_truth.select_dtypes(include="number").columns
+        if len(numeric):
+            obs = observed[numeric].to_numpy() & ground_truth[numeric].notna().to_numpy()
+            if not np.allclose(
+                output[numeric].to_numpy(dtype=float)[obs],
+                ground_truth[numeric].to_numpy(dtype=float)[obs],
+                rtol=1e-10,
+                atol=1e-12,
+            ):
+                raise ValueError("Imputer modified observed numerical values")
+        categorical = ground_truth.select_dtypes(exclude="number").columns
+        if len(categorical):
+            obs = observed[categorical].to_numpy() & ground_truth[categorical].notna().to_numpy()
+            if not np.all(
+                output[categorical].to_numpy()[obs]
+                == ground_truth[categorical].to_numpy()[obs]
+            ):
+                raise ValueError("Imputer modified observed categorical values")
+
+    @staticmethod
+    def compute_metrics(ground_truth: pd.DataFrame, imputed: Any, mask: pd.DataFrame):
+        output = pd.DataFrame(imputed, index=ground_truth.index, columns=ground_truth.columns)
+        numerical = ground_truth.select_dtypes(include="number").columns
+        categorical = ground_truth.select_dtypes(exclude="number").columns
+        nrmse = np.nan
+        if len(numerical):
+            truth = ground_truth[numerical].to_numpy(dtype=float)
+            estimate = output[numerical].to_numpy(dtype=float)
+            selected = mask[numerical].to_numpy()
+            scale = np.nanmax(truth, axis=0) - np.nanmin(truth, axis=0)
+            valid = selected & np.broadcast_to(scale > 0, truth.shape)
+            if valid.any():
+                normalised_error = (estimate - truth) / np.where(scale > 0, scale, 1.0)
+                nrmse = float(np.sqrt(np.mean(np.square(normalised_error[valid]))))
+        pfc = np.nan
+        if len(categorical):
+            selected = mask[categorical].to_numpy()
+            if selected.any():
+                equal = output[categorical].to_numpy() == ground_truth[categorical].to_numpy()
+                pfc = float(1.0 - equal[selected].mean())
+        return {"numerical_nrmse": nrmse, "categorical_pfc": pfc}
+
+
+def environment_metadata(config: Path, selected: list[str] | None) -> dict[str, Any]:
+    packages = ["gouda-cheese", "numpy", "pandas", "scikit-learn", "swiss-cheese", "torch"]
+    versions = {}
+    for package in packages:
+        try:
+            versions[package] = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            versions[package] = None
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=HERE.parent, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        dirty = bool(subprocess.run(
+            ["git", "status", "--porcelain"], cwd=HERE.parent, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip())
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        commit, dirty = None, None
+    return {
+        "created_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+        "config": str(config.resolve()),
+        "selected_experiments": selected,
+        "hostname": socket.gethostname(),
+        "platform": platform.platform(),
+        "processor": platform.processor(),
+        "python": sys.version,
+        "git_commit": commit,
+        "git_dirty": dirty,
+        "packages": versions,
+        "thread_environment": {
+            key: os.environ.get(key)
+            for key in ("RAYON_NUM_THREADS", "OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS")
+        },
+    }
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("-e", "--experiments", nargs="+", help="Experiment names to run")
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     return parser.parse_args()
 
 
-if __name__ == "__main__":
+def main() -> None:
     args = parse_args()
-    print(args.e)  # args.e is a list
-    if args.e is not None:
-        print("Running only selected experiments..")
-    for e in make_experiments("config.yaml"):
-        if args.e is not None:
-            if e.name not in args.e:
-                print(f"skipping {e.name}")
-                continue
-        print(f"Starting {e.name}..")
-        e.run()
-        print("Done..")
+    args.output.mkdir(parents=True, exist_ok=True)
+    frames = []
+    for params in make_experiments(args.config):
+        if args.experiments and params["name"] not in args.experiments:
+            continue
+        frames.append(Experiment(params, args.output).run())
+    raw = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    if raw.empty:
+        raise RuntimeError("No benchmark observations were produced")
+    raw.to_csv(args.output / "raw_results.csv", index=False)
+    _summary(raw).to_csv(args.output / "summary.csv", index=False)
+    with (args.output / "metadata.json").open("w", encoding="utf-8") as handle:
+        json.dump(environment_metadata(args.config, args.experiments), handle, indent=2)
+    print(f"Wrote {len(raw)} observations to {args.output.resolve()}")
+
+
+if __name__ == "__main__":
+    main()
