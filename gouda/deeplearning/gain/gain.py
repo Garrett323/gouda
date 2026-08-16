@@ -408,6 +408,8 @@ class GAIN(_BaseImputer, TransformerMixin):
         self._encoder = Encoder(self.encoding)
         X = validate_data(self, X, dtype=None, ensure_all_finite="allow-nan")
         X, cat_cols = self._encoder.encode(X)
+        if cat_cols is not None and self.encoding is None:
+            warnings.warn("Data contains categorical values but no encoding was passed hence it will be treated as numerical!")
         X = np.array(X, dtype=np.float64)
         raise_if_nan_col(X)
         if X.ndim != 2:
