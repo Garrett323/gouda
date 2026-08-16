@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-from missforest import MissForest as mfpy
 import pytest
 from gouda import MissForest, SimpleImputer
 import time
@@ -29,6 +28,9 @@ def test_not_simple():
 @pytest.mark.heavy
 @pytest.mark.filterwarnings("ignore::UserWarning")
 def test_time():
+    # only import when the test actually runs so ci doenst break
+    from missforest import MissForest as mfpy
+
     data = np.random.rand(500, 5)
     data[data < 0.48] = np.nan
     data = pd.DataFrame(data)

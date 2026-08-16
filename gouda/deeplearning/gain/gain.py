@@ -41,7 +41,6 @@ except ImportError as e:
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
-from dataclasses import dataclass, field
 from sklearn.impute._base import _BaseImputer
 from sklearn.base import TransformerMixin
 from sklearn.utils.validation import validate_data
@@ -85,6 +84,7 @@ class Generator(nn.Module):
         hidden_dim: int = 256,
         num_layers: int = 3,
         dropout: float = 0.0,
+        categorical_sizes: dict[int, int] | None = None,
     ) -> None:
         super().__init__()
         if num_layers < 2:
@@ -105,10 +105,12 @@ class Generator(nn.Module):
             if dropout > 0:
                 layers.append(nn.Dropout(dropout))
 
-        # Output block — no normalisation, sigmoid to keep outputs in [0, 1]
-        layers += [nn.Linear(hidden_dim, dim), nn.Sigmoid()]
-
-        self.net = nn.Sequential(*layers)
+        self.trunk = nn.Sequential(*layers)
+        self.numerical_head = nn.Linear(hidden_dim, dim)
+        self.categorical_heads = nn.ModuleDict({
+            str(column): nn.Linear(hidden_dim, size)
+            for column, size in (categorical_sizes or {}).items()
+        })
         self._init_weights()
 
     def _init_weights(self) -> None:
@@ -117,7 +119,11 @@ class Generator(nn.Module):
                 nn.init.xavier_uniform_(m.weight)
                 nn.init.zeros_(m.bias)
 
-    def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, dict[int, torch.Tensor]]:
         """
         Parameters
         ----------
@@ -129,7 +135,25 @@ class Generator(nn.Module):
         g_out : (B, dim) — generator output for ALL positions (mix with mask outside).
         """
         inp = torch.cat([x, mask], dim=1)
-        return self.net(inp)
+        hidden = self.trunk(inp)
+        generated = torch.sigmoid(self.numerical_head(hidden))
+        categorical_logits = {
+            int(column): head(hidden)
+            for column, head in self.categorical_heads.items()
+        }
+
+        # Keep the discriminator input compact. Each categorical distribution
+        # is represented by its differentiable expected, normalised class ID.
+        generated = generated.clone()
+        for column, logits in categorical_logits.items():
+            probabilities = torch.softmax(logits, dim=1)
+            classes = torch.arange(
+                logits.shape[1], device=logits.device, dtype=logits.dtype
+            )
+            denominator = max(logits.shape[1] - 1, 1)
+            generated[:, column] = (probabilities * classes).sum(dim=1) / denominator
+
+        return generated, categorical_logits
 
 
 # ---------------------------------------------------------------------------
@@ -262,9 +286,6 @@ class GAIN(_BaseImputer, TransformerMixin):
         self.missing_values = missing_values
         self.add_indicator = add_indicator
         self.keep_empty_features = keep_empty_features
-        if encoding is not None:
-            warnings.warn(
-                "Encoding Parameter is passed, but categorical handling is incomplete for [GAIN]", UserWarning)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -332,6 +353,8 @@ class GAIN(_BaseImputer, TransformerMixin):
         mask: torch.Tensor,
         x_hat: torch.Tensor,
         x_norm: torch.Tensor,
+        categorical_logits: dict[int, torch.Tensor],
+        categorical_targets: torch.Tensor,
         alpha: float,
     ) -> torch.Tensor:
         """
@@ -345,10 +368,28 @@ class GAIN(_BaseImputer, TransformerMixin):
                      missing_mask).sum() / n_missing
 
         # Reconstruction: penalise deviation from known values on observed entries
-        n_observed = mask.sum().clamp(min=1.0)
-        mse_loss = ((x_hat - x_norm) ** 2 * mask).sum() / n_observed
+        numerical_mask = mask.clone()
+        for column in categorical_logits:
+            numerical_mask[:, column] = 0.0
+        numerical_count = numerical_mask.sum().clamp(min=1.0)
+        mse_loss = (
+            (x_hat - x_norm) ** 2 * numerical_mask
+        ).sum() / numerical_count
 
-        return adv_loss + alpha * mse_loss
+        categorical_loss = x_hat.new_tensor(0.0)
+        categorical_count = 0
+        for column, logits in categorical_logits.items():
+            observed_rows = mask[:, column].bool()
+            if observed_rows.any():
+                categorical_loss = categorical_loss + F.cross_entropy(
+                    logits[observed_rows],
+                    categorical_targets[observed_rows, column].long(),
+                )
+                categorical_count += 1
+        if categorical_count:
+            categorical_loss = categorical_loss / categorical_count
+
+        return adv_loss + alpha * (mse_loss + categorical_loss)
 
     def fit(self, X: np.ndarray, y=None) -> "GAIN":
         """
@@ -363,9 +404,12 @@ class GAIN(_BaseImputer, TransformerMixin):
         -------
         self
         """
-        self._encoder = Encoder()
+        self.check_parameters()
+        self._encoder = Encoder(self.encoding)
         X = validate_data(self, X, dtype=None, ensure_all_finite="allow-nan")
-        X = self._encoder.encode(X)
+        X, cat_cols = self._encoder.encode(X)
+        if cat_cols is not None and self.encoding is None:
+            warnings.warn("Data contains categorical values but no encoding was passed hence it will be treated as numerical!")
         X = np.array(X, dtype=np.float64)
         raise_if_nan_col(X)
         if X.ndim != 2:
@@ -385,6 +429,11 @@ class GAIN(_BaseImputer, TransformerMixin):
 
         # ---- normalise ------------------------------------------------
         self._dim = dim
+        self._cat_cols = sorted(cat_cols or [])
+        self._categorical_sizes = {
+            column: int(np.nanmax(X[:, column])) + 1
+            for column in self._cat_cols
+        }
         self._data_min = np.nanmin(X, axis=0)
         self._data_max = np.nanmax(X, axis=0)
 
@@ -398,8 +447,11 @@ class GAIN(_BaseImputer, TransformerMixin):
         X_norm_t = torch.from_numpy(
             np.where(mask_np == 1, X_norm, 0.0).astype(np.float32)
         ).to(self._device)
+        categorical_targets_t = torch.from_numpy(
+            np.where(mask_np == 1, X, 0.0).astype(np.int64)
+        ).to(self._device)
 
-        dataset = TensorDataset(X_t, mask_t, X_norm_t)
+        dataset = TensorDataset(X_t, mask_t, X_norm_t, categorical_targets_t)
         loader = DataLoader(
             dataset,
             batch_size=min(self.batch_size, n_samples),
@@ -409,7 +461,11 @@ class GAIN(_BaseImputer, TransformerMixin):
 
         # ---- build networks ------------------------------------------
         self.generator_ = Generator(
-            dim, self.hidden_dim, self.num_layers, self.dropout
+            dim,
+            self.hidden_dim,
+            self.num_layers,
+            self.dropout,
+            self._categorical_sizes,
         ).to(self._device)
         self.discriminator_ = Discriminator(
             dim, self.hidden_dim, self.num_layers, self.dropout
@@ -439,7 +495,7 @@ class GAIN(_BaseImputer, TransformerMixin):
             epoch_d, epoch_g = 0.0, 0.0
             n_batches = 0
 
-            for x_batch, m_batch, xn_batch in loader:
+            for x_batch, m_batch, xn_batch, cat_target_batch in loader:
                 B = x_batch.size(0)
 
                 # ---------- Discriminator step ----------------------
@@ -451,7 +507,7 @@ class GAIN(_BaseImputer, TransformerMixin):
                 x_noisy = x_batch + noise * m_batch  # only on observed
 
                 with torch.no_grad():
-                    g_out = self.generator_(x_noisy, m_batch)
+                    g_out, _ = self.generator_(x_noisy, m_batch)
 
                 # Complete data: use observed values + generator for missing
                 x_hat = m_batch * x_batch + (1.0 - m_batch) * g_out
@@ -472,7 +528,7 @@ class GAIN(_BaseImputer, TransformerMixin):
                 self.generator_.train()
                 self.discriminator_.eval()
 
-                g_out = self.generator_(x_noisy, m_batch)
+                g_out, categorical_logits = self.generator_(x_noisy, m_batch)
                 x_hat = m_batch * x_batch + (1.0 - m_batch) * g_out
 
                 hint = self._build_hint(m_batch)
@@ -483,7 +539,14 @@ class GAIN(_BaseImputer, TransformerMixin):
                 # (we need d_out to have grad w.r.t. g_out)
                 d_out_g = self.discriminator_(x_hat, hint)
                 loss_G = self._gen_loss(
-                    d_out_g, m_batch, g_out, xn_batch, self.alpha)
+                    d_out_g,
+                    m_batch,
+                    g_out,
+                    xn_batch,
+                    categorical_logits,
+                    cat_target_batch,
+                    self.alpha,
+                )
 
                 opt_G.zero_grad()
                 loss_G.backward()
@@ -559,8 +622,8 @@ class GAIN(_BaseImputer, TransformerMixin):
         -------
         X_imputed : ndarray of shape (n_samples, n_features), no NaNs.
         """
-        if not hasattr(self, "is_fitted_") and self.is_fitted_ == True:
-            raise NotFittedError
+        if not getattr(self, "is_fitted_", False):
+            raise NotFittedError("This GAIN instance is not fitted yet. Call 'fit' before 'transform'.")
 
         if self.generator_ is None:
             raise RuntimeError("Call fit() before transform().")
@@ -569,7 +632,12 @@ class GAIN(_BaseImputer, TransformerMixin):
         columns = X.columns if is_df else None
         X = validate_data(self, X, dtype=None,
                           ensure_all_finite="allow-nan", reset=False)
-        X = self._encoder.encode(X)
+        X, cat_cols = self._encoder.encode(X)
+        cat_cols = sorted(cat_cols or [])
+        if cat_cols != self._cat_cols:
+            raise ValueError(
+                "Categorical columns in transform data do not match the fitted data."
+            )
         X = np.array(X, dtype=np.float64)
         if X.ndim != 2:
             raise ValueError("X must be 2-D.")
@@ -587,7 +655,14 @@ class GAIN(_BaseImputer, TransformerMixin):
 
         self.generator_.eval()
         with torch.no_grad():
-            g_out = self.generator_(X_t, mask_t)           # (N, dim) in [0,1]
+            g_out, categorical_logits = self.generator_(X_t, mask_t)
+
+            # Training uses softmax expectations so gradients can reach the
+            # generator. Inference uses an actual class for lossless decoding.
+            for column, logits in categorical_logits.items():
+                denominator = max(logits.shape[1] - 1, 1)
+                g_out[:, column] = logits.argmax(dim=1).to(g_out.dtype) / denominator
+
             # Keep observed values; fill missing with generator output
             x_hat = mask_t * X_t + (1.0 - mask_t) * g_out
 
@@ -626,12 +701,13 @@ class GAIN(_BaseImputer, TransformerMixin):
             "device":          self.device,
             "random_state":    self.random_state,
             "verbose":         self.verbose,
+            "encoding":        self.encoding,
             "missing_values":  self.missing_values,
             "add_indicator":   self.add_indicator,
             "keep_empty_features": self.keep_empty_features,
         }
 
-    def set_params(self, **params) -> "GAINImputer":
+    def set_params(self, **params) -> "GAIN":
         for k, v in params.items():
             if not hasattr(self, k):
                 raise ValueError(f"Invalid parameter '{k}'.")
@@ -648,3 +724,148 @@ class GAIN(_BaseImputer, TransformerMixin):
         tags.input_tags.allow_nan = True
         tags.input_tags.string = True   # declares intentional string/categorical support
         return tags
+
+    def check_parameters(self) -> None:
+        """Validate GAIN hyperparameters before fitting."""
+
+        if not isinstance(self.hidden_dim, int) or isinstance(self.hidden_dim, bool):
+            raise TypeError("hidden_dim must be an integer.")
+        if self.hidden_dim < 1:
+            raise ValueError("hidden_dim must be at least 1.")
+
+        if not isinstance(self.num_layers, int) or isinstance(self.num_layers, bool):
+            raise TypeError("num_layers must be an integer.")
+        if self.num_layers < 2:
+            raise ValueError("num_layers must be at least 2.")
+
+        if not isinstance(self.dropout, (int, float)) or isinstance(self.dropout, bool):
+            raise TypeError("dropout must be a number.")
+        if not 0.0 <= self.dropout < 1.0:
+            raise ValueError("dropout must be in the range [0.0, 1.0).")
+
+        if not isinstance(self.hint_rate, (int, float)) or isinstance(
+            self.hint_rate, bool
+        ):
+            raise TypeError("hint_rate must be a number.")
+        if not 0.0 < self.hint_rate <= 1.0:
+            raise ValueError("hint_rate must be in the range (0.0, 1.0].")
+
+        if not isinstance(self.alpha, (int, float)) or isinstance(self.alpha, bool):
+            raise TypeError("alpha must be a number.")
+        if self.alpha < 0.0:
+            raise ValueError("alpha must be greater than or equal to 0.")
+
+        if not isinstance(self.batch_size, int) or isinstance(self.batch_size, bool):
+            raise TypeError("batch_size must be an integer.")
+        if self.batch_size < 1:
+            raise ValueError("batch_size must be at least 1.")
+
+        if not isinstance(self.max_epochs, int) or isinstance(self.max_epochs, bool):
+            raise TypeError("max_epochs must be an integer.")
+        if self.max_epochs < 1:
+            raise ValueError("max_epochs must be at least 1.")
+
+        if not isinstance(self.lr, (int, float)) or isinstance(self.lr, bool):
+            raise TypeError("lr must be a number.")
+        if self.lr <= 0.0:
+            raise ValueError("lr must be greater than 0.")
+
+        if not isinstance(self.weight_decay, (int, float)) or isinstance(
+            self.weight_decay, bool
+        ):
+            raise TypeError("weight_decay must be a number.")
+        if self.weight_decay < 0.0:
+            raise ValueError("weight_decay must be greater than or equal to 0.")
+
+        if not isinstance(self.grad_clip, (int, float)) or isinstance(
+            self.grad_clip, bool
+        ):
+            raise TypeError("grad_clip must be a number.")
+        if self.grad_clip <= 0.0:
+            raise ValueError("grad_clip must be greater than 0.")
+
+        if not isinstance(self.label_smoothing, (int, float)) or isinstance(
+            self.label_smoothing, bool
+        ):
+            raise TypeError("label_smoothing must be a number.")
+        if not 0.0 <= self.label_smoothing < 0.5:
+            raise ValueError(
+                "label_smoothing must be in the range [0.0, 0.5)."
+            )
+
+        if not isinstance(self.patience, int) or isinstance(self.patience, bool):
+            raise TypeError("patience must be an integer.")
+        if self.patience < 1:
+            raise ValueError("patience must be at least 1.")
+
+        if not isinstance(self.min_delta, (int, float)) or isinstance(
+            self.min_delta, bool
+        ):
+            raise TypeError("min_delta must be a number.")
+        if self.min_delta < 0.0:
+            raise ValueError("min_delta must be greater than or equal to 0.")
+
+        if self.device is not None:
+            if not isinstance(self.device, str):
+                raise TypeError("device must be a string or None.")
+
+            try:
+                device = torch.device(self.device)
+            except (TypeError, RuntimeError) as error:
+                raise ValueError(
+                    f"Invalid device {self.device!r}."
+                ) from error
+
+            if device.type == "cuda" and not torch.cuda.is_available():
+                raise ValueError(
+                    "device='cuda' was requested, but CUDA is not available."
+                )
+
+            if device.type == "mps" and not torch.backends.mps.is_available():
+                raise ValueError(
+                    "device='mps' was requested, but MPS is not available."
+                )
+
+        if self.random_state is not None:
+            if not isinstance(self.random_state, int) or isinstance(
+                self.random_state, bool
+            ):
+                raise TypeError("random_state must be an integer or None.")
+            if self.random_state < 0:
+                raise ValueError(
+                    "random_state must be greater than or equal to 0."
+                )
+
+        if not isinstance(self.verbose, int) or isinstance(self.verbose, bool):
+            raise TypeError("verbose must be an integer.")
+        if self.verbose < 0:
+            raise ValueError("verbose must be greater than or equal to 0.")
+
+        if self.encoding not in (None, "label"):
+            raise ValueError(
+                "encoding must be 'label' or None."
+            )
+
+        try:
+            missing_values_is_nan = bool(np.isnan(self.missing_values))
+        except TypeError:
+            missing_values_is_nan = False
+
+        if not missing_values_is_nan:
+            raise ValueError(
+                "GAIN currently supports only missing_values=np.nan."
+            )
+
+        if not isinstance(self.add_indicator, bool):
+            raise TypeError("add_indicator must be a boolean.")
+        if self.add_indicator:
+            raise ValueError(
+                "add_indicator=True is not currently supported by GAIN."
+            )
+
+        if not isinstance(self.keep_empty_features, bool):
+            raise TypeError("keep_empty_features must be a boolean.")
+        if self.keep_empty_features:
+            raise ValueError(
+                "keep_empty_features=True is not currently supported by GAIN."
+            )

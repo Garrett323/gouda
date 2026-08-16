@@ -1,4 +1,5 @@
-use crate::utils::{self, StringEncoding, arr_to_out, constants::NOT_FITTED_ERR, pyany_to_vec};
+use crate::utils::Errors;
+use crate::utils::{self, StringEncoding, arr_to_out, pyany_to_vec};
 use ndarray::{Array2, ArrayView2};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes};
@@ -19,16 +20,13 @@ pub struct SimpleImputer {
 impl SimpleImputer {
     #[new]
     #[pyo3(signature = (encoding=None))]
-    pub fn new(encoding: Option<&str>) -> SimpleImputer {
-        SimpleImputer {
+    pub fn new(encoding: Option<&str>) -> PyResult<SimpleImputer> {
+        Ok(SimpleImputer {
             sample_means: None,
             // sample_mode: None,
-            string_encoding: match encoding {
-                Some(_) => Some(StringEncoding::LabelEncoding),
-                None => None,
-            },
+            string_encoding: utils::process_labelencoding(encoding)?,
             is_fitted: false,
-        }
+        })
     }
 
     pub fn fit(slf: Py<Self>, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
@@ -37,7 +35,7 @@ impl SimpleImputer {
             let (arr, _out, _enc) = pyany_to_vec(data, &inner.string_encoding)?;
             utils::raise_if_nan_col(arr.view())?;
             let ids = _enc.as_ref().map(|enc| &enc.string_column_indices);
-            inner.fit_impl(arr.view(), ids);
+            inner.fit_impl(arr.view(), ids)?;
             inner.is_fitted = true;
         } // dropping inner here (releasing the mutex)
         Ok(slf)
@@ -50,13 +48,14 @@ impl SimpleImputer {
     ) -> PyResult<Bound<'py, PyAny>> {
         // check if fitted
         if !self.is_fitted {
-            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
-                "{}",
-                NOT_FITTED_ERR
-            )));
+            return Err(Errors::NotFitted.into());
         }
         let (arr, out, enc) = pyany_to_vec(data, &self.string_encoding)?;
-        let imputed = self.impute(arr.view());
+        utils::check_feature_mismatch(
+            self.sample_means.as_ref().ok_or(Errors::NotFitted)?.len(),
+            arr.ncols(),
+        )?;
+        let imputed = self.impute(arr.view())?;
         // return python object
         arr_to_out(py, &imputed, out, enc.as_ref())
     }
@@ -102,17 +101,22 @@ impl SimpleImputer {
 }
 
 impl SimpleImputer {
-    pub fn fit_impl(&mut self, data: ArrayView2<f64>, categories: Option<&Vec<usize>>) -> &Self {
+    pub fn fit_impl(
+        &mut self,
+        data: ArrayView2<f64>,
+        categories: Option<&Vec<usize>>,
+    ) -> Result<&Self, Errors> {
         let mut means = self.get_means(data);
         if let Some(v) = categories {
-            let modes = self.get_modes(data.view(), &v);
+            let modes = self.get_modes(data.view(), &v)?;
             for (&categorical, mode) in v.iter().zip(modes) {
                 means[categorical] = mode;
             }
         }
         self.sample_means = Some(means);
-        return self;
+        Ok(self)
     }
+
     fn get_means(&self, data: ArrayView2<f64>) -> Vec<f64> {
         (0..data.ncols())
             .into_par_iter()
@@ -132,7 +136,11 @@ impl SimpleImputer {
             .collect()
     }
 
-    fn get_modes(&self, data: ArrayView2<f64>, categories: &Vec<usize>) -> Vec<f64> {
+    fn get_modes(
+        &self,
+        data: ArrayView2<f64>,
+        categories: &Vec<usize>,
+    ) -> Result<Vec<f64>, Errors> {
         categories
             .par_iter()
             .map(|&idx| {
@@ -144,25 +152,30 @@ impl SimpleImputer {
                 counts
                     .into_iter()
                     .max_by_key(|&(_, count)| count)
-                    .map(|(val, _)| val)
-                    .expect("Tried to find mode on empty column!") as f64
+                    .map(|(val, _)| val as f64)
+                    .ok_or(Errors::NoValidOp {
+                        operation: format!("computing mode on empty column: {}", idx),
+                    })
             })
             .collect()
     }
 
-    pub fn impute(&self, data: ArrayView2<f64>) -> Array2<f64> {
+    pub fn impute(&self, data: ArrayView2<f64>) -> Result<Array2<f64>, Errors> {
         let mut imputed = vec![0.0; data.shape()[0] * data.shape()[1]];
         for j in 0..data.shape()[0] {
             for i in 0..data.shape()[1] {
                 let index = j * data.shape()[1] + i;
                 if data[(j, i)].is_nan() {
-                    imputed[index] = self.sample_means.as_ref().expect(NOT_FITTED_ERR)[i];
+                    imputed[index] = self.sample_means.as_ref().ok_or(Errors::NotFitted)?[i];
                 } else {
                     imputed[index] = data[(j, i)];
                 }
             }
         }
-        Array2::from_shape_vec([data.nrows(), data.ncols()], imputed).unwrap()
+        Ok(
+            Array2::from_shape_vec([data.nrows(), data.ncols()], imputed)
+                .map_err(|e| Errors::Shape(e))?,
+        )
     }
 }
 
@@ -190,9 +203,13 @@ mod tests {
 
     #[test]
     fn test_impute() {
-        let mut simple = SimpleImputer::new(None);
+        let mut simple = SimpleImputer::new(None).unwrap();
         let data = Array2::from_shape_vec((5, 5), DATA.to_owned()).unwrap();
-        let imputed = simple.fit_impl(data.view(), None).impute(data.view());
+        let imputed = simple
+            .fit_impl(data.view(), None)
+            .unwrap()
+            .impute(data.view())
+            .unwrap();
         println!("Means: {:?}", simple.sample_means.as_ref().unwrap());
         println!("Data: {:?}", DATA);
         println!("Expected: {:?}", EXPECTED);
@@ -218,9 +235,9 @@ mod tests {
             (0.9573324 + 0.98189233 + 0.50595314 + 0.62366235) / 4.0,
             (0.45384631 + 0.5011135 + 0.12229672) / 3.0,
         ];
-        let mut simple = SimpleImputer::new(None);
+        let mut simple = SimpleImputer::new(None).unwrap();
         let data = Array2::from_shape_vec((5, 5), DATA.to_owned()).unwrap();
-        simple.fit_impl(data.view(), None);
+        simple.fit_impl(data.view(), None).unwrap();
         for (gt, estimate) in MEANS.iter().zip(simple.sample_means.as_ref().unwrap()) {
             let diff = gt - estimate;
             assert!(

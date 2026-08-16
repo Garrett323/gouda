@@ -1,8 +1,8 @@
 use crate::imputer::SimpleImputer;
-use crate::utils::{self, StringEncoding};
+use crate::utils::{self, Errors, StringEncoding};
 use libsvm_rs::{
-    set_quiet, train, KernelType, SvmModel, SvmNode, SvmParameter, SvmParameterBuilder, SvmProblem,
-    SvmType,
+    KernelType, SvmError, SvmModel, SvmNode, SvmParameter, SvmParameterBuilder, SvmProblem,
+    SvmType, set_quiet, train,
 };
 use ndarray::{Array2, ArrayView1, ArrayView2};
 use pyo3::prelude::*;
@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 pub struct SVMImputer {
     models: Vec<SvmModel>,
     string_encoding: Option<StringEncoding>,
-    _cat_cols: Vec<usize>,
+    cat_cols: Vec<usize>,
     num_cols: Vec<usize>,
     init: SimpleImputer,
     #[pyo3(get)]
@@ -29,11 +29,9 @@ const ALLOWED_KERNELS: &[&str] = &["linear", "rbf", "sigmoid", "polynomial"];
 impl SVMImputer {
     #[new]
     #[pyo3(signature = (kernel="linear", encoding=None))]
-    pub fn new(kernel: &str, encoding: Option<&str>) -> SVMImputer {
+    pub fn new(kernel: &str, encoding: Option<&str>) -> PyResult<SVMImputer> {
         set_quiet(true);
-        // assert!(ALLOWED_WEIGHTS.contains(&weights));
-        // SVMImputer::sanity_check(&metric, &weights);
-        SVMImputer {
+        Ok(SVMImputer {
             models: Vec::new(),
             is_fitted: false,
             kernel: match kernel.to_lowercase().as_str() {
@@ -42,16 +40,20 @@ impl SVMImputer {
                 "sigmoid" => KernelType::Sigmoid,
                 "polynomial" => KernelType::Polynomial,
                 // "precomputed" => KernelType::Precomputed,
-                _ => panic!("kernel parameter not supported, {:?}", ALLOWED_KERNELS),
+                value => {
+                    return Err(Errors::UnsupportedValue {
+                        parameter: "SVM.Kernel",
+                        value: value.to_owned(),
+                        supported: Some(ALLOWED_KERNELS),
+                    }
+                    .into());
+                }
             },
-            _cat_cols: Vec::new(),
+            cat_cols: Vec::new(),
             num_cols: Vec::new(),
-            string_encoding: match encoding {
-                None => None,
-                Some(_) => Some(StringEncoding::LabelEncoding),
-            },
-            init: SimpleImputer::new(encoding),
-        }
+            string_encoding: utils::process_labelencoding(encoding)?,
+            init: SimpleImputer::new(encoding)?,
+        })
     }
 
     pub fn fit(slf: Py<Self>, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
@@ -66,9 +68,9 @@ impl SVMImputer {
                     .into_iter()
                     .filter(|idx| !indices.contains(idx))
                     .collect();
-                inner._cat_cols = indices;
+                inner.cat_cols = indices;
             }
-            inner.fit_model(arr.view());
+            inner.fit_model(arr.view())?;
             inner.is_fitted = true;
         } // dropping inner here (releasing the mutex)
         Ok(slf)
@@ -86,7 +88,7 @@ impl SVMImputer {
         let (arr, out, enc) = utils::pyany_to_vec(data, &self.string_encoding)?;
         utils::check_feature_mismatch(self.models.len(), arr.ncols())?;
         // actual method
-        let imputed = self.impute(arr.view());
+        let imputed = self.impute(arr.view())?;
         // return python object
         utils::arr_to_out(py, &imputed, out, enc.as_ref())
     }
@@ -136,7 +138,7 @@ impl SVMImputer {
         self.models = decoded.models;
         self.string_encoding = decoded.string_encoding;
         self.is_fitted = decoded.is_fitted;
-        self._cat_cols = decoded._cat_cols;
+        self.cat_cols = decoded.cat_cols;
         self.num_cols = decoded.num_cols;
         self.kernel = decoded.kernel;
         self.init = decoded.init;
@@ -145,58 +147,68 @@ impl SVMImputer {
 }
 
 impl SVMImputer {
-    fn fit_model(&mut self, arr: ArrayView2<f64>) -> &SVMImputer {
+    fn fit_model(&mut self, arr: ArrayView2<f64>) -> Result<&SVMImputer, Errors> {
         let imputed = self
             .init
             .fit_impl(
                 arr,
-                if self._cat_cols.len() == 0 {
+                if self.cat_cols.len() == 0 {
                     None
                 } else {
-                    Some(&self._cat_cols)
+                    Some(&self.cat_cols)
                 },
-            )
-            .impute(arr);
-        self.models = (0..arr.ncols())
+            )?
+            .impute(arr)?;
+        self.models = Vec::with_capacity(arr.ncols());
+        let models: Vec<Result<SvmModel, SvmError>> = (0..arr.ncols())
             .into_par_iter()
             .map(|i| {
-                let training_params = self.get_model_params(i);
+                let training_params = self.get_model_params(i)?;
                 let problem = create_problem(imputed.view(), (i, arr.column(i)), false);
-                train::svm_train(&problem, &training_params)
+                Ok(train::svm_train(&problem, &training_params))
             })
             .collect();
-        self
-    }
-    fn impute(&self, arr: ArrayView2<f64>) -> Array2<f64> {
-        let imputed = self.init.impute(arr);
-        let imputed: Vec<f64> = (0..arr.ncols())
-            .into_par_iter()
-            .flat_map(|i| {
-                let problem = create_problem(imputed.view(), (i, arr.column(i)), true);
-                (0..problem.instances.len())
-                    .into_par_iter()
-                    .map(move |row| {
-                        libsvm_rs::predict::predict(&self.models[i], &problem.instances[row])
-                    })
-            })
-            .collect();
-        let mut arr = arr.to_owned();
-        let mut counter = 0;
-        for v in &mut arr {
-            if !v.is_nan() {
-                continue;
-            }
-            *v = imputed[counter];
-            counter += 1;
-            if counter > imputed.len() {
-                break;
+        for (col, m) in models.into_iter().enumerate() {
+            match m {
+                Ok(model) => self.models.push(model),
+                Err(err) => {
+                    return Err(Errors::SvmTraining {
+                        column: col,
+                        message: err.to_string(),
+                    });
+                }
             }
         }
-        arr
+        Ok(self)
+    }
+    fn impute(&self, arr: ArrayView2<f64>) -> Result<Array2<f64>, Errors> {
+        let initialized = self.init.impute(arr)?;
+        let mut output = arr.to_owned();
+        for column in 0..arr.ncols() {
+            let target = arr.column(column);
+
+            // Remember which rows are missing in this column.
+            let missing_rows: Vec<usize> = target
+                .iter()
+                .enumerate()
+                .filter_map(|(row, value)| if value.is_nan() { Some(row) } else { None })
+                .collect();
+            if missing_rows.is_empty() {
+                continue;
+            }
+            // Build one prediction instance for each missing row.
+            let problem = create_problem(initialized.view(), (column, target), true);
+            debug_assert_eq!(missing_rows.len(), problem.instances.len(),);
+            for (row, instance) in missing_rows.into_iter().zip(problem.instances.iter()) {
+                let prediction = libsvm_rs::predict::predict(&self.models[column], instance);
+                output[(row, column)] = prediction;
+            }
+        }
+        Ok(output)
     }
 
-    fn get_model_params(&self, target_column: usize) -> SvmParameter {
-        let svm_type = if self._cat_cols.len() > 0 && !self.num_cols.contains(&target_column) {
+    fn get_model_params(&self, target_column: usize) -> Result<SvmParameter, SvmError> {
+        let svm_type = if self.cat_cols.len() > 0 && !self.num_cols.contains(&target_column) {
             SvmType::CSvc
         } else {
             SvmType::EpsilonSvr
@@ -205,7 +217,6 @@ impl SVMImputer {
             .svm_type(svm_type)
             .kernel_type(self.kernel)
             .build()
-            .unwrap()
     }
 }
 fn create_problem(
@@ -214,8 +225,9 @@ fn create_problem(
     only_nans: bool,
 ) -> SvmProblem {
     let (left, right) = data.view().split_at(ndarray::Axis(1), target_column.0);
-    let left_rows = left.rows();
+    let (_, right) = right.view().split_at(ndarray::Axis(1), 1);
     let right_rows = right.rows();
+    let left_rows = left.rows();
 
     let instances: Vec<Vec<SvmNode>> = left_rows
         .into_iter()
@@ -269,5 +281,29 @@ fn create_problem(
 impl SVMImputer {}
 
 #[cfg(test)]
-mod tests { // use super::*; // has access to everything, including private
+mod tests {
+    use super::*; // has access to everything, including private
+    #[test]
+    fn create_problem_does_not_leak_target_column() {
+        let data = ndarray::array![[1.0, 10.0, 100.0], [2.0, 20.0, 200.0], [3.0, 30.0, 300.0],];
+
+        // Column 1 is the target: [10, 20, 30]
+        let target_column = data.column(1);
+
+        let problem = create_problem(data.view(), (1, target_column), false);
+
+        // We should have one training instance per non-NaN target.
+        assert_eq!(problem.instances.len(), 3);
+        assert_eq!(problem.labels, vec![10.0, 20.0, 30.0]);
+
+        for instance in &problem.instances {
+            let values: Vec<_> = instance.iter().map(|node| node.value).collect();
+            println!("{:?}", values);
+            for v in values {
+                for t in target_column {
+                    assert!((v - t).abs() > 1e-8, "target feature leaked");
+                }
+            }
+        }
+    }
 }

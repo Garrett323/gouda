@@ -36,16 +36,17 @@ jobs:
           #   target: s390x
           # - runner: ubuntu-22.04
           #   target: ppc64le
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
-          python-version: 3.x
+          python-version: ${{ matrix.python-version }}
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist --find-interpreter
+          args: --release --out dist --interpreter python${{ matrix.python-version }}
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: "2_28" 
           before-script-linux: |
@@ -61,7 +62,7 @@ jobs:
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
-          name: wheels-linux-${{ matrix.platform.target }}
+          name: wheels-linux-${{ matrix.platform.target }}-py${{ matrix.python-version }}
           path: dist
 
   # musllinux:
@@ -116,11 +117,12 @@ jobs:
           #   target: aarch64
           #   python_arch: arm64
           #   vcpkg_triplet: arm64-windows-static-md
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
-          python-version: 3.13
+          python-version: ${{ matrix.python-version }}
           architecture: ${{ matrix.platform.python_arch }}
       # - name: Install OpenBLAS via vcpkg
       #   run: |
@@ -141,7 +143,7 @@ jobs:
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
-          name: wheels-windows-${{ matrix.platform.target }}
+          name: wheels-windows-${{ matrix.platform.target }}-py${{ matrix.python-version }}
           path: dist
 
   macos:
@@ -153,21 +155,22 @@ jobs:
             target: x86_64
           - runner: macos-latest
             target: aarch64
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
-          python-version: 3.x
+          python-version: ${{ matrix.python-version }}
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist --find-interpreter
+          args: --release --out dist --interpreter python
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
-          name: wheels-macos-${{ matrix.platform.target }}
+          name: wheels-macos-${{ matrix.platform.target }}-py${{ matrix.python-version }}
           path: dist
 
   sdist:
@@ -185,12 +188,56 @@ jobs:
           name: wheels-sdist
           path: dist
 
+  wheel-tests:
+    name: Test wheel on Python ${{ matrix.python-version }}
+    runs-on: ubuntu-22.04
+    needs: [linux]
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/download-artifact@v7
+        with:
+          name: wheels-linux-x86_64-py${{ matrix.python-version }}
+          path: dist
+
+      - name: Install wheel and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+          python -m pip install dist/*.whl
+
+      - name: Verify installed package
+        env:
+          RAYON_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          OMP_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+        run: |
+          cd "$RUNNER_TEMP"
+          python -c "import gouda; print(gouda.__file__)"
+      - name: Test installed wheel
+        run: |
+          cp -R "$GITHUB_WORKSPACE/tests" "$RUNNER_TEMP/tests"
+          cp "$GITHUB_WORKSPACE/pytest.ini" "$RUNNER_TEMP/pytest.ini"
+          cd "$RUNNER_TEMP"
+          python -m pytest -q \
+            -m "not heavy" \
+            --ignore=tests/test_gain.py \
+            tests
+
   release:
     name: Release
     runs-on: ubuntu-latest
     if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
     # needs: [linux, musllinux, windows, macos, sdist]
-    needs: [linux, macos, sdist]
+    needs: [linux, macos, sdist, windows, wheel-tests]
     permissions:
       # Use to sign the release artifacts
       id-token: write

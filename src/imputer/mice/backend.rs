@@ -1,5 +1,6 @@
-use crate::utils::SendPtr;
-use ndarray::{Array1, Array2, ArrayView1, Axis};
+use crate::utils::Errors::{LinearAlgebra, NotFitted};
+use crate::utils::{Errors, SendPtr};
+use ndarray::{Array1, Array2, ArrayView1, Axis, ShapeError};
 use ndarray_linalg::{LeastSquaresSvd, SVD};
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +22,7 @@ fn default_rng() -> Mutex<SmallRng> {
 }
 
 impl Solver {
-    pub fn predict(&self, arr: &Array2<f64>) -> Array1<f64> {
+    pub fn predict(&self, arr: &Array2<f64>) -> Result<Array1<f64>, Errors> {
         match self {
             Solver::Linear(model) => model.predict(arr),
             Solver::Logistic(model) => model.predict(arr),
@@ -30,7 +31,7 @@ impl Solver {
         }
     }
 
-    pub fn fit(&mut self, arr: &Array2<f64>, target: &Array1<f64>) {
+    pub fn fit(&mut self, arr: &Array2<f64>, target: &Array1<f64>) -> Result<(), Errors> {
         match self {
             Solver::Linear(model) => model.fit(arr, target),
             Solver::Logistic(model) => model.fit(arr, target),
@@ -61,14 +62,14 @@ impl Solver {
 pub trait Regressor: Send + Sync {
     fn bias(&self) -> bool;
     fn coefficients(&self) -> Option<ArrayView1<'_, f64>>;
-    fn predict(&self, points: &Array2<f64>) -> Array1<f64> {
+    fn predict(&self, points: &Array2<f64>) -> Result<Array1<f64>, Errors> {
         let points = if self.bias() {
             &add_bias_column(points)
         } else {
             points
         };
-        let weights = self.coefficients().expect("Unable to find weights!");
-        points.dot(&weights)
+        let weights = self.coefficients().ok_or(NotFitted)?;
+        Ok(points.dot(&weights))
     }
 }
 
@@ -109,14 +110,22 @@ impl Ridge {
         }
     }
 
-    fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>) {
-        let x_mean = data.mean_axis(Axis(0)).unwrap(); // original mean, keep this
+    fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>) -> Result<(), Errors> {
+        let x_mean = data.mean_axis(Axis(0)).ok_or(Errors::NoValidOp {
+            operation: "compute mean on empty array".to_string(),
+        })?; // original mean, keep this
         let data = data - &x_mean;
 
-        let (u, e, v) = data.svd(true, true).unwrap();
-        let u = u.unwrap();
+        let (u, e, v) = data
+            .svd(true, true)
+            .map_err(|err| Errors::LinearAlgebra(err))?;
+        let u = u.ok_or(Errors::NoValidOp {
+            operation: "Failed SVD decomposition!".to_string(),
+        })?;
         let u = u.slice(ndarray::s![.., ..e.len()]);
-        let v = v.unwrap();
+        let v = v.ok_or(Errors::NoValidOp {
+            operation: "Failed SVD decomposition!".to_string(),
+        })?;
         let v = v.slice(ndarray::s![..e.len(), ..]);
 
         let d = &e / (&e.mapv(|x| x * x) + self.alpha);
@@ -124,12 +133,16 @@ impl Ridge {
         let mut beta = v.t().dot(&(d * uty));
 
         if self.bias {
-            let y_mean = target.mean().unwrap(); // move up here too
+            let y_mean = target.mean().ok_or(Errors::NoValidOp {
+                operation: "Computing mean on empty list!".to_string(),
+            })?; // move up here too
             let intercept = Array1::from_elem(1, y_mean - x_mean.dot(&beta));
-            beta = ndarray::concatenate(Axis(0), &[intercept.view(), beta.view()]).unwrap();
+            beta = ndarray::concatenate(Axis(0), &[intercept.view(), beta.view()])
+                .map_err(|err| Errors::Shape(err))?;
         }
 
         self.coefficients = Some(beta);
+        Ok(())
     }
 }
 impl Regressor for Ridge {
@@ -137,7 +150,7 @@ impl Regressor for Ridge {
         self.bias
     }
     fn coefficients(&self) -> Option<ArrayView1<'_, f64>> {
-        Some(self.coefficients.as_ref().unwrap().view())
+        Some(self.coefficients.as_ref()?.view())
     }
 }
 
@@ -149,7 +162,7 @@ impl LinearRegression {
         }
     }
 
-    fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>) {
+    fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>) -> Result<(), Errors> {
         let data = if self.bias {
             &add_bias_column(data)
         } else {
@@ -157,9 +170,10 @@ impl LinearRegression {
         };
         self.coefficients = Some(
             data.least_squares(&target)
-                .expect("No least squares solution possible")
+                .map_err(|err| LinearAlgebra(err))?
                 .solution,
         );
+        Ok(())
     }
 }
 impl Regressor for LinearRegression {
@@ -167,7 +181,7 @@ impl Regressor for LinearRegression {
         self.bias
     }
     fn coefficients(&self) -> Option<ArrayView1<'_, f64>> {
-        Some(self.coefficients.as_ref().unwrap().view())
+        Some(self.coefficients.as_ref()?.view())
     }
 }
 
@@ -180,7 +194,7 @@ impl LogisticRegression {
         }
     }
 
-    fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>) {
+    fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>) -> Result<(), Errors> {
         let target: Vec<u64> = target.par_iter().map(|&x| x as u64).collect();
         self.n_classes = target
             .iter()
@@ -194,23 +208,28 @@ impl LogisticRegression {
         };
         let mut weights = Array2::<f64>::zeros((self.n_classes, data.ncols()));
         let weight_ptr = std::sync::Arc::new(SendPtr(weights.as_mut_ptr()));
-        (0..self.n_classes).into_par_iter().for_each(|i| {
-            let ptr = std::sync::Arc::clone(&weight_ptr);
-            let target: Array1<f64> = target
-                .iter()
-                .map(|&v| if v == i as u64 { 1.0 } else { 0.0 })
-                .collect();
-            let coef = data
-                .least_squares(&target)
-                .expect("No least squares solution possible")
-                .solution;
-            for (j, &c) in coef.iter().enumerate() {
-                unsafe {
-                    *ptr.0.add(i * weights.ncols() + j) = c;
+        let res: Result<(), Errors> = (0..self.n_classes)
+            .into_par_iter()
+            .map(|i| {
+                let ptr = std::sync::Arc::clone(&weight_ptr);
+                let target: Array1<f64> = target
+                    .iter()
+                    .map(|&v| if v == i as u64 { 1.0 } else { 0.0 })
+                    .collect();
+                let coef = data
+                    .least_squares(&target)
+                    .map_err(|err| LinearAlgebra(err))?
+                    .solution;
+                for (j, &c) in coef.iter().enumerate() {
+                    unsafe {
+                        *ptr.0.add(i * weights.ncols() + j) = c;
+                    }
                 }
-            }
-        });
+                Ok(())
+            })
+            .collect();
         self.coefficients = Some(weights);
+        res
     }
     fn bias(&self) -> bool {
         self.bias
@@ -220,20 +239,23 @@ impl LogisticRegression {
         // Some(self.coefficients.as_ref().unwrap().row(0))
     }
 
-    fn predict(&self, points: &Array2<f64>) -> Array1<f64> {
+    fn predict(&self, points: &Array2<f64>) -> Result<Array1<f64>, Errors> {
         let points = if self.bias() {
             &add_bias_column(points)
         } else {
             points
         };
-        let probabilites = points.dot(&self.coefficients.as_ref().expect("Call fit first!").t());
-        let predictions: Array1<f64> = Array1::from(
-            (0..probabilites.nrows())
-                .into_par_iter()
-                .map(|i| argmax(probabilites.row(i).as_slice().unwrap()).0 as f64)
-                .collect::<Vec<_>>(),
-        );
-        predictions
+        let probabilites = points.dot(&self.coefficients.as_ref().ok_or(NotFitted)?.t());
+        let predictions = (0..probabilites.nrows())
+            .into_par_iter()
+            .map(|i| -> Result<f64, Errors> {
+                let row = probabilites.row(i);
+                let slice = row.as_slice().ok_or(NotFitted)?;
+                let (idx, _) = argmax(slice)?;
+                Ok(idx as f64)
+            })
+            .collect::<Result<Vec<f64>, Errors>>()?;
+        Ok(Array1::from(predictions))
     }
 }
 
@@ -246,85 +268,115 @@ fn add_bias_column(x: &Array2<f64>) -> Array2<f64> {
 
 const PMM_BACKEND: &[&str] = &["linear", "ridge"];
 impl PMM {
-    pub fn new(n_neighbors: usize, backend: &str, alpha: Option<f64>) -> PMM {
+    pub fn new(n_neighbors: usize, backend: &str, alpha: Option<f64>) -> Result<PMM, Errors> {
         let model = match backend.to_lowercase().as_str() {
             "linear" => Box::new(Solver::Linear(LinearRegression::new())),
-            "ridge" => Box::new(Solver::Ridge(Ridge::new(
-                alpha.expect("Provide a Some(value) for alpha"),
-            ))),
-            _ => panic!(
-                "Solver {backend} not supported! List of supported backend for PMM {:?}",
-                PMM_BACKEND
-            ),
+            "ridge" => Box::new(Solver::Ridge(Ridge::new(alpha.ok_or(
+                Errors::UnsupportedValue {
+                    parameter: "Ridge.alpha",
+                    value: "None".to_string(),
+                    supported: Some(&["0.0", "1.0"]),
+                },
+            )?))),
+            val => {
+                return Err(Errors::UnsupportedValue {
+                    parameter: "PMM.Backend",
+                    value: val.to_string(),
+                    supported: Some(PMM_BACKEND),
+                });
+            }
         };
-        PMM {
+        Ok(PMM {
             n_neighbors,
             pool: None,
             model: model,
             rng: Mutex::new(rand::rngs::SmallRng::seed_from_u64(42)),
-        }
+        })
     }
 
     fn sample(&self, arr: &[f64]) -> f64 {
-        let mut rng = self.rng.lock().unwrap();
+        if arr.is_empty() {
+            return f64::NAN;
+        }
+        let mut rng = self
+            .rng
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         arr.choose(&mut rng).unwrap().clone()
     }
-
+    #[allow(dead_code)]
     fn bias(&self) -> bool {
         self.model.bias()
     }
+    #[allow(dead_code)]
     fn coefficients(&self) -> Option<ArrayView1<'_, f64>> {
         self.model.coefficients()
     }
-    fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>) {
+    fn fit(&mut self, data: &Array2<f64>, target: &Array1<f64>) -> Result<(), Errors> {
         self.pool = Some(target.iter().filter(|e| !e.is_nan()).copied().collect());
-        self.model.fit(data, target);
+        self.model.fit(data, target)?;
+        Ok(())
     }
 
-    fn predict(&self, points: &Array2<f64>) -> Array1<f64> {
-        let predictions = self.model.predict(points).to_vec();
+    fn predict(&self, points: &Array2<f64>) -> Result<Array1<f64>, Errors> {
+        let predictions = self.model.predict(points)?.to_vec();
         let mut samples = Array1::zeros(points.nrows());
-        let pool = self.pool.as_ref().expect("Call Fit before predict!");
+        let pool = self.pool.as_ref().ok_or(NotFitted)?;
 
-        predictions.iter().enumerate().for_each(|(i, p)| {
-            if self.n_neighbors >= pool.len() {
-                samples[i] = self.sample(&pool.to_vec());
-            } else {
-                let mut top_k: Vec<f64> = vec![f64::MAX; self.n_neighbors]; //Array1::ones(self.n_neighbors) * f64::MAX;
-                let distances: Vec<f64> = pool.par_iter().map(|x| (x - p).powi(2).abs()).collect();
-                let (mut max_idx, mut max_val) = argmax(&top_k);
-                for (j, d) in distances.iter().enumerate() {
-                    if d < &(max_val - p).abs() {
-                        top_k[max_idx] = pool[j];
-                        (max_idx, max_val) = argmax(&top_k);
+        let res: Result<(), Errors> = predictions
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                if self.n_neighbors >= pool.len() {
+                    samples[i] = self.sample(&pool.to_vec());
+                    Ok(())
+                } else {
+                    let mut top_k: Vec<f64> = vec![f64::MAX; self.n_neighbors]; //Array1::ones(self.n_neighbors) * f64::MAX;
+                    let distances: Vec<f64> =
+                        pool.par_iter().map(|x| (x - p).powi(2).abs()).collect();
+                    let (mut max_idx, mut max_val) = argmax(&top_k)?;
+                    for (j, d) in distances.iter().enumerate() {
+                        if d < &(max_val - p).abs() {
+                            top_k[max_idx] = pool[j];
+                            (max_idx, max_val) = argmax(&top_k)?;
+                        }
                     }
+                    top_k.retain(|&e| e < f64::MAX);
+                    samples[i] = self.sample(&top_k);
+                    Ok(())
                 }
-                top_k.retain(|&e| e < f64::MAX);
-                samples[i] = self.sample(&top_k);
-            }
-        });
-        samples
+            })
+            .collect();
+        res?;
+        Ok(samples)
     }
 }
 
 impl Clone for PMM {
     fn clone(&self) -> Self {
+        let rng = self
+            .rng
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         Self {
             n_neighbors: self.n_neighbors,
             pool: self.pool.clone(),
             model: self.model.clone(),
-            rng: Mutex::new(self.rng.lock().expect("rng mutex poisoned").clone()),
+            rng: Mutex::new(rng.clone()),
         }
     }
 }
 
-fn argmax(arr: &[f64]) -> (usize, f64) {
+fn argmax(arr: &[f64]) -> Result<(usize, f64), Errors> {
     let (id, v) = arr
         .iter()
         .enumerate()
-        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-        .unwrap();
-    (id, v.clone())
+        .max_by(|(_, a), (_, b)| a.total_cmp(b))
+        .map(|(id, v)| (id, *v))
+        .ok_or(Errors::NoValidOp {
+            operation: "computing argmax on empty array!".to_string(),
+        })?;
+    Ok((id, v.clone()))
 }
 
 #[cfg(test)]
@@ -349,7 +401,8 @@ mod test {
         );
 
         let estimates = model
-            .predict(&Array2::from_shape_vec((4, 5), POINTS.to_vec()).expect("Predict failed"));
+            .predict(&Array2::from_shape_vec((4, 5), POINTS.to_vec()).expect("Predict failed"))
+            .unwrap();
         assert!(N_POINTS == estimates.len());
         for &p in &estimates {
             assert!(
@@ -379,7 +432,9 @@ mod test {
             .unwrap(),
         );
 
-        let estimates = model.predict(&Array2::from_shape_vec((4, 5), POINTS.to_vec()).unwrap());
+        let estimates = model
+            .predict(&Array2::from_shape_vec((4, 5), POINTS.to_vec()).unwrap())
+            .unwrap();
         assert!(EXPECTED.len() == estimates.len());
         for (p, q) in EXPECTED.iter().zip(&estimates) {
             assert!(
@@ -400,7 +455,7 @@ mod test {
             .collect();
 
         let mut model = LogisticRegression::new();
-        model.fit(&x, &y);
+        model.fit(&x, &y).unwrap();
         // let estimate = model.predict(&x);
         assert!(model.coefficients.as_ref().map_or(false, |_| true));
         let coef = model.coefficients.as_ref().unwrap();
@@ -414,8 +469,8 @@ mod test {
         let y = Array1::from_shape_vec(20, TARGET.to_owned()).unwrap();
 
         let mut model = LinearRegression::new();
-        model.fit(&x, &y);
-        let estimate = model.predict(&x);
+        model.fit(&x, &y).unwrap();
+        let estimate = model.predict(&x).unwrap();
         println!("EXPECTED:{:?}\nActual{:?}", ESTIMATES, estimate);
 
         let error = ESTIMATES.iter().zip(estimate).map(|(p, q)| (p - q).abs());
@@ -430,8 +485,8 @@ mod test {
         let y = Array1::from_shape_vec(20, TARGET.to_owned()).unwrap();
 
         let mut model = Ridge::new(1.0);
-        model.fit(&x, &y);
-        let estimate = model.predict(&x);
+        model.fit(&x, &y).unwrap();
+        let estimate = model.predict(&x).unwrap();
         println!("EXPECTED:{:?}\nActual{:?}", RIDGE_ESTIMATE, estimate);
 
         let error = RIDGE_ESTIMATE
