@@ -42,13 +42,35 @@ uv run python benchmarking/run.py -e knn knn-sk
 uv run python benchmarking/run.py --config benchmarking/config.yaml --output benchmarking/results
 ```
 
-For stable timing, pin native thread counts and record the machine load and CPU
-governor used for the published run, for example:
+For the primary throughput comparison, use the same explicit native thread
+count for every method and record the machine load and CPU governor. For
+example, to compare methods using eight threads:
 
 ```bash
-RAYON_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+RAYON_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 \
   uv run python benchmarking/run.py
 ```
+
+Also report a single-thread comparison as a secondary result. It separates
+algorithmic/runtime overhead from parallel speedup, but it should not replace
+the native multithread result when multithreading is a central contribution.
+The default Iris dataset is too small to demonstrate meaningful scaling;
+include datasets with thousands of rows in the final benchmark matrix.
+
+## Thread scaling
+
+The strong-scaling benchmark runs each thread count in a fresh process so
+Rayon and BLAS pools are initialized correctly. It produces raw/summary CSVs
+plus a speedup and parallel-efficiency figure in PDF and PNG formats.
+
+```bash
+uv run python benchmarking/scaling.py --threads 1,2,4,8,16
+```
+
+The defaults benchmark KNN on a fixed synthetic matrix of 2,000 rows, 40
+features, and 20% MCAR missingness. Increase `--rows` for a machine with many
+cores, because useful scaling requires enough work per thread. Report both
+speedup and absolute runtime; speedup alone can conceal a slow baseline.
 
 The output directory contains:
 
@@ -75,16 +97,3 @@ an error/runtime panel with seed standard-deviation bands, and the complete run
 gets an accuracy–runtime trade-off plot. The palette is color-vision-friendly,
 markers also distinguish methods in grayscale, and PDF text remains editable.
 
-## Publication checklist
-
-1. Choose datasets that cover numerical, categorical, mixed, small, and large
-   cases; justify inclusion and report row/feature counts.
-2. Run MCAR, MAR, and MNAR as separate configured experiments where the
-   scientific claim concerns all three mechanisms.
-3. Use at least 10 independent missingness seeds for final confidence
-   intervals. Increase timing repetitions only to stabilize runtime estimates.
-4. Pin thread counts and use an otherwise idle, fixed-frequency machine.
-5. Archive the exact configuration, raw results, metadata, commit hash, and
-   built wheel with the journal artifact.
-6. Do not compare timing across different machines or thread policies.
-7. Report failures and timeouts rather than silently dropping an algorithm.
