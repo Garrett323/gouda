@@ -41,7 +41,6 @@ except ImportError as e:
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
-from dataclasses import dataclass, field
 from sklearn.impute._base import _BaseImputer
 from sklearn.base import TransformerMixin
 from sklearn.utils.validation import validate_data
@@ -406,7 +405,7 @@ class GAIN(_BaseImputer, TransformerMixin):
         self
         """
         self.check_parameters()
-        self._encoder = Encoder()
+        self._encoder = Encoder(self.encoding)
         X = validate_data(self, X, dtype=None, ensure_all_finite="allow-nan")
         X, cat_cols = self._encoder.encode(X)
         X = np.array(X, dtype=np.float64)
