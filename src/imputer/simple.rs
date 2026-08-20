@@ -1,6 +1,6 @@
 use crate::utils::Errors;
 use crate::utils::{self, StringEncoding, arr_to_out, pyany_to_vec};
-use ndarray::{Array2, ArrayView2};
+use ndarray::{Array2, ArrayView1, ArrayView2};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
@@ -106,58 +106,15 @@ impl SimpleImputer {
         data: ArrayView2<f64>,
         categories: Option<&Vec<usize>>,
     ) -> Result<&Self, Errors> {
-        let mut means = self.get_means(data);
+        let mut means = get_means(data);
         if let Some(v) = categories {
-            let modes = self.get_modes(data.view(), &v)?;
+            let modes = get_modes(data.view(), &v)?;
             for (&categorical, mode) in v.iter().zip(modes) {
                 means[categorical] = mode;
             }
         }
         self.sample_means = Some(means);
         Ok(self)
-    }
-
-    fn get_means(&self, data: ArrayView2<f64>) -> Vec<f64> {
-        (0..data.ncols())
-            .into_par_iter()
-            .map(|i| {
-                let mut nnans = 0.0;
-                let mut mean = 0.0;
-                for entry in data.column(i).iter() {
-                    if entry.is_nan() {
-                        nnans += 1.0;
-                        continue;
-                    }
-                    mean += entry;
-                }
-                mean /= data.nrows() as f64 - nnans;
-                mean
-            })
-            .collect()
-    }
-
-    fn get_modes(
-        &self,
-        data: ArrayView2<f64>,
-        categories: &Vec<usize>,
-    ) -> Result<Vec<f64>, Errors> {
-        categories
-            .par_iter()
-            .map(|&idx| {
-                let mut counts: HashMap<usize, usize> = HashMap::new();
-                let col = data.column(idx);
-                for &x in col {
-                    *counts.entry(x as usize).or_insert(0) += 1;
-                }
-                counts
-                    .into_iter()
-                    .max_by_key(|&(_, count)| count)
-                    .map(|(val, _)| val as f64)
-                    .ok_or(Errors::NoValidOp {
-                        operation: format!("computing mode on empty column: {}", idx),
-                    })
-            })
-            .collect()
     }
 
     pub fn impute(&self, data: ArrayView2<f64>) -> Result<Array2<f64>, Errors> {
@@ -177,6 +134,48 @@ impl SimpleImputer {
                 .map_err(|e| Errors::Shape(e))?,
         )
     }
+}
+
+fn get_means(data: ArrayView2<f64>) -> Vec<f64> {
+    (0..data.ncols())
+        .into_par_iter()
+        .map(|i| {
+            let mut nnans = 0.0;
+            let mut mean = 0.0;
+            for entry in data.column(i).iter() {
+                if entry.is_nan() {
+                    nnans += 1.0;
+                    continue;
+                }
+                mean += entry;
+            }
+            mean /= data.nrows() as f64 - nnans;
+            mean
+        })
+        .collect()
+}
+
+fn get_modes(data: ArrayView2<f64>, categories: &Vec<usize>) -> Result<Vec<f64>, Errors> {
+    categories
+        .par_iter()
+        .map(|&idx| {
+            let mut counts: HashMap<usize, usize> = HashMap::new();
+            let col: ArrayView1<f64> = data.column(idx);
+            for &x in col {
+                if x.is_nan() {
+                    continue;
+                }
+                *counts.entry(x as usize).or_insert(0) += 1;
+            }
+            counts
+                .into_iter()
+                .max_by_key(|&(_, count)| count)
+                .map(|(val, _)| val as f64)
+                .ok_or(Errors::NoValidOp {
+                    operation: format!("computing mode on empty column: {}", idx),
+                })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -247,6 +246,31 @@ mod tests {
                 estimate
             );
         }
+    }
+
+    #[test]
+    fn categorical_mode_ignores_nan_values() {
+        let data = Array2::from_shape_vec(
+            (6, 2),
+            vec![
+                1.0,
+                0.0,
+                2.0,
+                0.0,
+                3.0,
+                1.0,
+                4.0,
+                f64::NAN,
+                5.0,
+                f64::NAN,
+                6.0,
+                f64::NAN,
+            ],
+        )
+        .unwrap();
+
+        let mode = get_modes(data.view(), &vec![0, 1]).unwrap();
+        assert_eq!(mode[1], 0.0);
     }
 
     const DATA: &[f64] = &[
