@@ -27,7 +27,7 @@ import logging
 import numpy as np
 import pandas as pd
 import yaml
-from sklearn.experimental import enable_iterative_imputer 
+from sklearn.experimental import enable_iterative_imputer
 from sklearn.impute import IterativeImputer, KNNImputer as KNNsk, SimpleImputer
 from ucimlrepo import fetch_ucirepo
 
@@ -44,7 +44,7 @@ MODEL_REGISTRY = {
     "svm": SVMImputer,
     "simple": SimpleImputer,
     "gain": None,
-    # Gouda's MissForest is intentionally excluded 
+    # Gouda's MissForest is intentionally excluded
     # BASELINES
     "iterative": IterativeImputer,
     "knn-sk": KNNsk,
@@ -68,7 +68,8 @@ def make_experiments(path: Path) -> Generator[dict[str, Any], None, None]:
     with path.open(encoding="utf-8") as handle:
         documents = list(yaml.safe_load_all(handle))
     if len(documents) < 2:
-        raise ValueError("Configuration needs one defaults document and at least one experiment")
+        raise ValueError(
+            "Configuration needs one defaults document and at least one experiment")
     defaults = documents[0]
     for experiment in documents[1:]:
         if experiment:
@@ -81,20 +82,24 @@ def get_model(name: str):
             try:
                 from gouda import GAIN
             except ImportError as exc:
-                raise RuntimeError("GAIN benchmarks require: uv sync --extra deep") from exc
+                raise RuntimeError(
+                    "GAIN benchmarks require: uv sync --extra deep") from exc
             return GAIN
         case "missforest-py":
             try:
                 from missforest import MissForest as MissForestPy
             except ImportError as exc:
-                raise RuntimeError("missforest-py benchmarks require the benchmark development dependencies") from exc
+                raise RuntimeError(
+                    "missforest-py benchmarks require the benchmark development dependencies") from exc
             return MissForestPy
         case _:
             try:
                 return MODEL_REGISTRY[name]
             except KeyError as exc:
-                choices = ", ".join(sorted([*MODEL_REGISTRY, "gain", "missforest-py"]))
-                raise ValueError(f"Unknown model {name!r}; choose one of: {choices}") from exc
+                choices = ", ".join(
+                    sorted([*MODEL_REGISTRY, "gain", "missforest-py"]))
+                raise ValueError(f"Unknown model {name!r}; choose one of: {
+                                 choices}") from exc
 
 
 def _safe_std(values: pd.Series) -> float:
@@ -134,9 +139,11 @@ def _summary(raw: pd.DataFrame) -> pd.DataFrame:
         base["n_seeds"] = int(group["seed"].nunique())
         for metric in metrics:
             values = group[metric].dropna()
-            base[f"{metric}_mean"] = float(values.mean()) if len(values) else np.nan
+            base[f"{metric}_mean"] = float(
+                values.mean()) if len(values) else np.nan
             base[f"{metric}_std"] = _safe_std(values)
-            base[f"{metric}_median"] = float(values.median()) if len(values) else np.nan
+            base[f"{metric}_median"] = float(
+                values.median()) if len(values) else np.nan
         rows.append(base)
     return pd.DataFrame(rows).sort_values(keys).reset_index(drop=True)
 
@@ -148,7 +155,8 @@ class Experiment:
         self.model_name = str(params["model"])
         self.model = get_model(self.model_name)
         if params.get("missing_mechanism") not in {"mcar", "mar", "mnar"}:
-            raise ValueError(f"{self.name}: missing_mechanism must be mcar, mar, or mnar")
+            raise ValueError(
+                f"{self.name}: missing_mechanism must be mcar, mar, or mnar")
         self.model_params = params.get("model_params") or {}
 
     def run(self) -> pd.DataFrame:
@@ -156,14 +164,17 @@ class Experiment:
         for dataset_id in self.params["datasets"]:
             ground_truth, dataset_name = self.fetch_data(int(dataset_id))
             if self.params.get("no_cat", False) and self._has_categoricals(ground_truth):
-                LOGGER.info(f"[{self.name}] skipping mixed dataset {dataset_name!r}")
+                LOGGER.info(f"[{self.name}] skipping mixed dataset {
+                            dataset_name!r}")
                 continue
             LOGGER.info(f"[{self.name}] {dataset_name}")
             for rate in self.params["missing_rates"]:
                 for seed in self.params["seeds"]:
-                    missing, mask = self.make_missing(ground_truth, float(rate), int(seed))
+                    missing, mask = self.make_missing(
+                        ground_truth, float(rate), int(seed))
                     for _ in range(int(self.params.get("n_warmups", 1))):
-                        self._new_model(int(seed)).fit(missing).transform(missing)
+                        self._new_model(int(seed)).fit(
+                            missing).transform(missing)
 
                     seed_timings: list[tuple[float, float]] = []
                     imputed = None
@@ -229,10 +240,12 @@ class Experiment:
                 "Missing value generation does require a swiss-cheese version compatible with this Python; "
             ) from exc
         factory = {"mar": MAR, "mnar": MNAR, "mcar": MCAR}[mechanism]
-        missing = factory(**mechanism_params, random_seed=seed)(data.copy(), rate)
+        missing = factory(**mechanism_params,
+                          random_seed=seed)(data.copy(), rate)
         mask = missing.isna() & data.notna()
         if not mask.to_numpy().any():
-            raise RuntimeError(f"No values were removed for rate={rate}, seed={seed}")
+            raise RuntimeError(f"No values were removed for rate={
+                               rate}, seed={seed}")
         return missing, mask
 
     @staticmethod
@@ -241,13 +254,16 @@ class Experiment:
 
     @staticmethod
     def validate_output(ground_truth: pd.DataFrame, imputed: Any, mask: pd.DataFrame) -> None:
-        output = pd.DataFrame(imputed, index=ground_truth.index, columns=ground_truth.columns)
+        output = pd.DataFrame(
+            imputed, index=ground_truth.index, columns=ground_truth.columns)
         if output.shape != ground_truth.shape:
-            raise ValueError(f"Imputer changed shape from {ground_truth.shape} to {output.shape}")
+            raise ValueError(f"Imputer changed shape from {
+                             ground_truth.shape} to {output.shape}")
         observed = ~mask
         numeric = ground_truth.select_dtypes(include="number").columns
         if len(numeric):
-            obs = observed[numeric].to_numpy() & ground_truth[numeric].notna().to_numpy()
+            obs = observed[numeric].to_numpy(
+            ) & ground_truth[numeric].notna().to_numpy()
             if not np.allclose(
                 output[numeric].to_numpy(dtype=float)[obs],
                 ground_truth[numeric].to_numpy(dtype=float)[obs],
@@ -257,16 +273,19 @@ class Experiment:
                 raise ValueError("Imputer modified observed numerical values")
         categorical = ground_truth.select_dtypes(exclude="number").columns
         if len(categorical):
-            obs = observed[categorical].to_numpy() & ground_truth[categorical].notna().to_numpy()
+            obs = observed[categorical].to_numpy(
+            ) & ground_truth[categorical].notna().to_numpy()
             if not np.all(
                 output[categorical].to_numpy()[obs]
                 == ground_truth[categorical].to_numpy()[obs]
             ):
-                raise ValueError("Imputer modified observed categorical values")
+                raise ValueError(
+                    "Imputer modified observed categorical values")
 
     @staticmethod
     def compute_metrics(ground_truth: pd.DataFrame, imputed: Any, mask: pd.DataFrame):
-        output = pd.DataFrame(imputed, index=ground_truth.index, columns=ground_truth.columns)
+        output = pd.DataFrame(
+            imputed, index=ground_truth.index, columns=ground_truth.columns)
         numerical = ground_truth.select_dtypes(include="number").columns
         categorical = ground_truth.select_dtypes(exclude="number").columns
         nrmse = np.nan
@@ -277,19 +296,23 @@ class Experiment:
             scale = np.nanmax(truth, axis=0) - np.nanmin(truth, axis=0)
             valid = selected & np.broadcast_to(scale > 0, truth.shape)
             if valid.any():
-                normalised_error = (estimate - truth) / np.where(scale > 0, scale, 1.0)
-                nrmse = float(np.sqrt(np.mean(np.square(normalised_error[valid]))))
+                normalised_error = (estimate - truth) / \
+                    np.where(scale > 0, scale, 1.0)
+                nrmse = float(
+                    np.sqrt(np.mean(np.square(normalised_error[valid]))))
         pfc = np.nan
         if len(categorical):
             selected = mask[categorical].to_numpy()
             if selected.any():
-                equal = output[categorical].to_numpy() == ground_truth[categorical].to_numpy()
+                equal = output[categorical].to_numpy(
+                ) == ground_truth[categorical].to_numpy()
                 pfc = float(1.0 - equal[selected].mean())
         return {"numerical_nrmse": nrmse, "categorical_pfc": pfc}
 
 
 def environment_metadata(config: Path, selected: list[str] | None) -> dict[str, Any]:
-    packages = ["gouda-cheese", "numpy", "pandas", "scikit-learn", "swiss-cheese", "torch"]
+    packages = ["gouda-cheese", "numpy", "pandas",
+                "scikit-learn", "swiss-cheese", "torch"]
     versions = {}
     for package in packages:
         try:
@@ -327,7 +350,8 @@ def environment_metadata(config: Path, selected: list[str] | None) -> dict[str, 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("-e", "--experiments", nargs="+", help="Experiment names to run")
+    parser.add_argument("-e", "--experiments", nargs="+",
+                        help="Experiment names to run")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     return parser.parse_args()
@@ -350,7 +374,8 @@ def main() -> None:
     raw.to_csv(args.output / "raw_results.csv", index=False)
     _summary(raw).to_csv(args.output / "summary.csv", index=False)
     with (args.output / "metadata.json").open("w", encoding="utf-8") as handle:
-        json.dump(environment_metadata(args.config, args.experiments), handle, indent=2)
+        json.dump(environment_metadata(
+            args.config, args.experiments), handle, indent=2)
     LOGGER.info(f"Wrote {len(raw)} observations to {args.output.resolve()}")
 
 
@@ -363,4 +388,10 @@ if __name__ == "__main__":
         ],
         force=True,
     )
-    main()
+    try:
+        LOGGER.info(
+            "@@@@@@@@@@@@@@@@@@ Starting benchmark run @@@@@@@@@@@@@@@@@@@@@"
+        )
+        main()
+    except Exception as e:
+        LOGGER.error(f"Pipeline FAILED: {e}")
