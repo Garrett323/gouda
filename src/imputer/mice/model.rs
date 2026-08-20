@@ -1,4 +1,4 @@
-use super::backend::{LinearRegression, LogisticRegression, Ridge, Solver, PMM};
+use super::backend::{LinearRegression, LogisticRegression, PMM, Ridge, Solver};
 use crate::imputer::SimpleImputer;
 use crate::utils::Errors::NotFitted;
 use crate::utils::{self, Errors, SendPtr, StringEncoding};
@@ -62,12 +62,12 @@ impl Mice {
             let mut inner = slf.borrow_mut(py);
             let (arr, _out, enc) = utils::pyany_to_vec(data, &inner.string_encoding)?;
             utils::raise_if_nan_col(arr.view())?;
-            if let Some(_) = inner.string_encoding {
-                inner.cat_columns = Some(enc.map_or(Vec::new(), |e| e.string_column_indices));
+            let cat_columns = if let Some(_) = enc {
+                Some(enc.map_or(Vec::new(), |e| e.string_column_indices))
             } else {
-                inner.cat_columns = None;
-            }
-            inner.fit_impl(arr.view())?;
+                None
+            };
+            inner.fit_impl(arr.view(), cat_columns.as_ref())?;
             inner.is_fitted = true;
         } // dropping inner here (releasing the mutex)
         Ok(slf)
@@ -165,12 +165,16 @@ impl Mice {
         Ok(imputed)
     }
 
-    fn fit_impl(&mut self, data: ArrayView2<f64>) -> Result<&Self, Errors> {
-        let mut imputed = self.init.fit_impl(data, None)?.impute(data)?;
+    fn fit_impl(
+        &mut self,
+        data: ArrayView2<f64>,
+        categories: Option<&Vec<usize>>,
+    ) -> Result<&Self, Errors> {
+        let mut imputed = self.init.fit_impl(data, categories)?.impute(data)?;
         let mut models: Vec<_> = (0..data.ncols())
             .into_iter()
             .map(|i| {
-                if self.cat_columns.as_ref().map_or(false, |v| v.contains(&i)) {
+                if categories.is_some_and(|v| v.contains(&i)) {
                     self.cat_backend.clone()
                 } else {
                     self.backend.clone()
@@ -193,6 +197,7 @@ impl Mice {
         }
         self._n_iter = self.max_iter;
         self.models = models;
+        self.cat_columns = categories.cloned();
         Ok(self)
     }
 }
@@ -257,7 +262,7 @@ mod test {
             .impute(data.view())
             .unwrap();
         let mice = Mice::linear(2)
-            .fit_impl(data.view())
+            .fit_impl(data.view(), None)
             .unwrap()
             .impute(data.view())
             .unwrap();
@@ -271,12 +276,12 @@ mod test {
     fn ridge_neq_lin() {
         let data = Array2::from_shape_vec((8, 4), POINTS.to_vec()).unwrap();
         let ridge = Mice::ridge(2, 1.0)
-            .fit_impl(data.view())
+            .fit_impl(data.view(), None)
             .unwrap()
             .impute(data.view())
             .unwrap();
         let lin = Mice::linear(2)
-            .fit_impl(data.view())
+            .fit_impl(data.view(), None)
             .unwrap()
             .impute(data.view())
             .unwrap();
@@ -290,7 +295,7 @@ mod test {
     fn pmm() {
         let data = Array2::from_shape_vec((8, 4), POINTS.to_vec()).unwrap();
         let pmm = Mice::pmm(2)
-            .fit_impl(data.view())
+            .fit_impl(data.view(), None)
             .unwrap()
             .impute(data.view())
             .unwrap();
@@ -299,12 +304,50 @@ mod test {
             assert!(!e.is_nan());
         }
         let lin = Mice::linear(2)
-            .fit_impl(data.view())
+            .fit_impl(data.view(), None)
             .unwrap()
             .impute(data.view())
             .unwrap();
         let diff = pmm.iter().zip(&lin).any(|(p, q)| (p - q).abs() > 1e-6);
         assert!(diff, "Linear == PMM values :(");
+    }
+
+    #[test]
+    fn categorical_targets_use_logistic_backend() {
+        let data = Array2::from_shape_vec(
+            (6, 3),
+            vec![
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                1.0,
+                1.0,
+                0.0,
+                2.0,
+                1.0,
+                1.0,
+                0.0,
+                2.0,
+                0.0,
+                f64::NAN,
+                2.0,
+                1.0,
+                f64::NAN,
+            ],
+        )
+        .unwrap();
+
+        let mut mice = Mice::new(1, "linear", 1.0, "linear", Some("label")).unwrap();
+        let cat_columns = vec![2];
+
+        mice.fit_impl(data.view(), Some(&cat_columns)).unwrap();
+
+        assert!(
+            matches!(mice.models[2], Solver::Logistic(_)),
+            "categorical column 2 should use the logistic backend"
+        );
     }
 
     const POINTS: &[f64] = &[
