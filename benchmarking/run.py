@@ -9,6 +9,7 @@ deviations.
 from __future__ import annotations
 
 import argparse
+from ast import arg
 import gc
 import importlib.metadata
 import json
@@ -22,12 +23,12 @@ from collections.abc import Generator, Mapping
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
-
+import logging
 import numpy as np
 import pandas as pd
 import yaml
-from sklearn.experimental import enable_iterative_imputer  # noqa: F401
-from sklearn.impute import IterativeImputer, KNNImputer as KNNsk
+from sklearn.experimental import enable_iterative_imputer 
+from sklearn.impute import IterativeImputer, KNNImputer as KNNsk, SimpleImputer
 from ucimlrepo import fetch_ucirepo
 
 from gouda import KnnImputer, Mice, SVMImputer, SimpleImputer
@@ -36,17 +37,21 @@ from gouda import KnnImputer, Mice, SVMImputer, SimpleImputer
 HERE = Path(__file__).resolve().parent
 DEFAULT_CONFIG = HERE / "config.yaml"
 DEFAULT_OUTPUT = HERE / "results"
+# Nones will be imported on the fly; due to dependencies
 MODEL_REGISTRY = {
     "mice": Mice,
     "knn": KnnImputer,
     "svm": SVMImputer,
-    "knn-sk": KNNsk,
     "simple": SimpleImputer,
-    # Gouda's MissForest is intentionally excluded until its observed-value
-    # corruption bug is fixed. Keeping an invalid method in a paper benchmark
-    # would produce misleading accuracy and timing results.
+    "gain": None,
+    # Gouda's MissForest is intentionally excluded 
+    # BASELINES
     "iterative": IterativeImputer,
+    "knn-sk": KNNsk,
+    "simple-sk": SimpleImputer,
+    "missforest-py": None
 }
+LOGGER = logging.getLogger(__name__)
 
 
 def _deep_update(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
@@ -71,23 +76,25 @@ def make_experiments(path: Path) -> Generator[dict[str, Any], None, None]:
 
 
 def get_model(name: str):
-    if name == "gain":
-        try:
-            from gouda import GAIN
-        except ImportError as exc:
-            raise RuntimeError("GAIN benchmarks require: uv sync --extra deep") from exc
-        return GAIN
-    if name == "missforest-py":
-        try:
-            from missforest import MissForest as MissForestPy
-        except ImportError as exc:
-            raise RuntimeError("missforest-py benchmarks require the benchmark development dependencies") from exc
-        return MissForestPy
-    try:
-        return MODEL_REGISTRY[name]
-    except KeyError as exc:
-        choices = ", ".join(sorted([*MODEL_REGISTRY, "gain", "missforest-py"]))
-        raise ValueError(f"Unknown model {name!r}; choose one of: {choices}") from exc
+    match name:
+        case "gain":
+            try:
+                from gouda import GAIN
+            except ImportError as exc:
+                raise RuntimeError("GAIN benchmarks require: uv sync --extra deep") from exc
+            return GAIN
+        case "missforest-py":
+            try:
+                from missforest import MissForest as MissForestPy
+            except ImportError as exc:
+                raise RuntimeError("missforest-py benchmarks require the benchmark development dependencies") from exc
+            return MissForestPy
+        case _:
+            try:
+                return MODEL_REGISTRY[name]
+            except KeyError as exc:
+                choices = ", ".join(sorted([*MODEL_REGISTRY, "gain", "missforest-py"]))
+                raise ValueError(f"Unknown model {name!r}; choose one of: {choices}") from exc
 
 
 def _safe_std(values: pd.Series) -> float:
@@ -135,12 +142,11 @@ def _summary(raw: pd.DataFrame) -> pd.DataFrame:
 
 
 class Experiment:
-    def __init__(self, params: dict[str, Any], output_dir: Path) -> None:
+    def __init__(self, params: dict[str, Any]) -> None:
         self.params = params
         self.name = str(params["name"])
         self.model_name = str(params["model"])
         self.model = get_model(self.model_name)
-        self.output_dir = output_dir
         if params.get("missing_mechanism") not in {"mcar", "mar", "mnar"}:
             raise ValueError(f"{self.name}: missing_mechanism must be mcar, mar, or mnar")
         self.model_params = params.get("model_params") or {}
@@ -150,9 +156,9 @@ class Experiment:
         for dataset_id in self.params["datasets"]:
             ground_truth, dataset_name = self.fetch_data(int(dataset_id))
             if self.params.get("no_cat", False) and self._has_categoricals(ground_truth):
-                print(f"[{self.name}] skipping mixed dataset {dataset_name!r}")
+                LOGGER.info(f"[{self.name}] skipping mixed dataset {dataset_name!r}")
                 continue
-            print(f"[{self.name}] {dataset_name}")
+            LOGGER.info(f"[{self.name}] {dataset_name}")
             for rate in self.params["missing_rates"]:
                 for seed in self.params["seeds"]:
                     missing, mask = self.make_missing(ground_truth, float(rate), int(seed))
@@ -334,7 +340,10 @@ def main() -> None:
     for params in make_experiments(args.config):
         if args.experiments and params["name"] not in args.experiments:
             continue
-        frames.append(Experiment(params, args.output).run())
+        exp = Experiment(params)
+        df = exp.run()
+        df.to_csv(f"{args.output}/{exp.name}.csv")
+        frames.append(df)
     raw = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     if raw.empty:
         raise RuntimeError("No benchmark observations were produced")
@@ -342,8 +351,16 @@ def main() -> None:
     _summary(raw).to_csv(args.output / "summary.csv", index=False)
     with (args.output / "metadata.json").open("w", encoding="utf-8") as handle:
         json.dump(environment_metadata(args.config, args.experiments), handle, indent=2)
-    print(f"Wrote {len(raw)} observations to {args.output.resolve()}")
+    LOGGER.info(f"Wrote {len(raw)} observations to {args.output.resolve()}")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.FileHandler(f"{HERE}/bench.log"),
+        ],
+        force=True,
+    )
     main()
