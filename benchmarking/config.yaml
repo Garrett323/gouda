@@ -16,8 +16,7 @@ missing_rates:
   - 0.5
   - 0.6
   - 0.7
-model_params:
-  encoding: label
+model_params: null
 seeds: 
   - 42
   - 179
@@ -31,11 +30,15 @@ n_warmups: 1
 name: simple 
 model: simple
 missing_mechanism: mcar
+model_params:
+  encoding: label
 
 ---
 name: mice
 model: mice
 missing_mechanism: mcar
+model_params:
+  encoding: label
 
 ---
 name: knn
@@ -43,6 +46,7 @@ model: knn
 missing_mechanism: mcar
 model_params:
   metric: gower
+  encoding: label
 
 ---
 name: svm
@@ -50,12 +54,14 @@ model: svm
 missing_mechanism: mcar
 model_params:
   kernel: rbf
+  encoding: label
 
 ---
 name: gain
 model: gain
 missing_mechanism: mcar
-no_cat: True
+model_params:
+  encoding: label
 
 #################################################### BASELINES ##########################################################################
 ---
@@ -69,7 +75,8 @@ no_cat: True
 name: missforest-py
 model: missforest-py
 missing_mechanism: mcar
-model_params: null
+model_params: 
+  verbose: 0
 no_cat: True
 
 ---
