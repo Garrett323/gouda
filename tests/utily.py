@@ -1,4 +1,5 @@
 import pytest
+from contextlib import nullcontext
 import numpy as np
 import pandas as pd
 
@@ -70,3 +71,14 @@ def missing_mixed_data():
     mask = rng.random(df.shape) < missing_fraction
     missing = df.mask(mask, pd.NA)
     return df, missing, mask
+
+
+def expected_warning(model, params):
+    name = model.__name__
+
+    if name == "ConstantImputer" and params.get("encoding") is not None:
+          return pytest.warns(
+              UserWarning,
+              match="categorical handling is incomplete",
+          )
+    return nullcontext()
