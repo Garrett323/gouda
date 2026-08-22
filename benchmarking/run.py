@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 import yaml
 from sklearn.experimental import enable_iterative_imputer
-from sklearn.impute import IterativeImputer, KNNImputer as KNNsk, SimpleImputer
+from sklearn.impute import IterativeImputer, KNNImputer as KNNsk, SimpleImputer as SimpleSk
 from ucimlrepo import fetch_ucirepo
 
 from gouda import KnnImputer, Mice, SVMImputer, SimpleImputer
@@ -48,7 +48,7 @@ MODEL_REGISTRY = {
     # BASELINES
     "iterative": IterativeImputer,
     "knn-sk": KNNsk,
-    "simple-sk": SimpleImputer,
+    "simple-sk": SimpleSk,
     "missforest-py": None
 }
 LOGGER = logging.getLogger(__name__)

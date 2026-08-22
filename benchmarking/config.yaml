@@ -65,8 +65,15 @@ model_params:
 
 #################################################### BASELINES ##########################################################################
 ---
-name: iterative 
+name: iterative-sk
 model: iterative
+missing_mechanism: mcar
+model_params: null
+no_cat: True
+
+---
+name: simple-sk
+model: simple-sk
 missing_mechanism: mcar
 model_params: null
 no_cat: True

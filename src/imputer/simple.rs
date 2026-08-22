@@ -1,9 +1,10 @@
 use crate::utils::Errors;
 use crate::utils::{self, StringEncoding, arr_to_out, pyany_to_vec};
-use ndarray::{Array2, ArrayView1, ArrayView2};
+use ndarray::{Array2, ArrayView1, ArrayView2, Axis};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes};
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+// use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -106,11 +107,23 @@ impl SimpleImputer {
         data: ArrayView2<f64>,
         categories: Option<&Vec<usize>>,
     ) -> Result<&Self, Errors> {
-        let mut means = get_means(data);
-        if let Some(v) = categories {
-            let modes = get_modes(data.view(), &v)?;
-            for (&categorical, mode) in v.iter().zip(modes) {
+        let mut means;
+        if let Some(categorical_column_indicies) = categories {
+            means = get_means(data, categorical_column_indicies);
+            let modes = get_modes(data.view(), categorical_column_indicies)?;
+            for (&categorical, mode) in categorical_column_indicies.iter().zip(modes) {
                 means[categorical] = mode;
+            }
+        } else {
+            means = get_means(data, &Vec::new());
+        }
+        for mean in &means {
+            if mean.is_infinite() {
+                Err(Errors::UnsupportedValue {
+                    parameter: "mean",
+                    value: "INF".to_string(),
+                    supported: None,
+                })?;
             }
         }
         self.sample_means = Some(means);
@@ -118,31 +131,33 @@ impl SimpleImputer {
     }
 
     pub fn impute(&self, data: ArrayView2<f64>) -> Result<Array2<f64>, Errors> {
-        let mut imputed = vec![0.0; data.shape()[0] * data.shape()[1]];
-        for j in 0..data.shape()[0] {
-            for i in 0..data.shape()[1] {
-                let index = j * data.shape()[1] + i;
-                if data[(j, i)].is_nan() {
-                    imputed[index] = self.sample_means.as_ref().ok_or(Errors::NotFitted)?[i];
-                } else {
-                    imputed[index] = data[(j, i)];
-                }
-            }
-        }
-        Ok(
-            Array2::from_shape_vec([data.nrows(), data.ncols()], imputed)
-                .map_err(|e| Errors::Shape(e))?,
-        )
+        let means = self.sample_means.as_ref().ok_or(Errors::NotFitted)?;
+        let mut imputed = data.to_owned();
+        imputed
+            .axis_iter_mut(Axis(1))
+            .into_par_iter()
+            .enumerate()
+            .for_each(|(ncol, mut col)| {
+                (0..data.nrows()).into_iter().for_each(|row| {
+                    if col[row].is_nan() {
+                        col[row] = means[ncol];
+                    }
+                })
+            });
+        Ok(imputed)
     }
 }
 
-fn get_means(data: ArrayView2<f64>) -> Vec<f64> {
+fn get_means(data: ArrayView2<f64>, cat_cols: &Vec<usize>) -> Vec<f64> {
     (0..data.ncols())
         .into_par_iter()
-        .map(|i| {
+        .map(|col| {
+            if cat_cols.contains(&col) {
+                return f64::INFINITY;
+            }
             let mut nnans = 0.0;
             let mut mean = 0.0;
-            for entry in data.column(i).iter() {
+            for entry in data.column(col).iter() {
                 if entry.is_nan() {
                     nnans += 1.0;
                     continue;

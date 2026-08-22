@@ -12,8 +12,19 @@ import pandas as pd
 
 
 HERE = Path(__file__).resolve().parent
-PALETTE = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9", "#000000"]
-MARKERS = ["o", "s", "^", "D", "P", "X", "v"]
+METHOD_COLORS = {
+    "knn": "#0072B2",
+    "knn-sk": "#56B4E9",
+    "mice": "#009E73",
+    "iterative": "#CC79A7",
+    "simple": "#D55E00",
+    "missforest-py": "#000000",
+    "svm": "#E69F00",
+    "gain": "#7A5195",
+}
+TRIANGLE_METHODS = {"knn", "mice", "simple", "svm", "gain"}
+RECTANGLE_METHODS = {"knn-sk", "iterative", "missforest-py", "simple-sk"}
+FALLBACK_COLOR = "#666666"
 
 
 def configure_style() -> None:
@@ -36,14 +47,25 @@ def _methods(data: pd.DataFrame) -> list[str]:
     return list(dict.fromkeys(data["experiment"].astype(str)))
 
 
+def _method_style(method: str) -> tuple[str, str]:
+    """Return a stable color and an implementation-family marker."""
+    if method in TRIANGLE_METHODS:
+        marker = "^"
+    elif method in RECTANGLE_METHODS:
+        marker = "s"
+    else:
+        marker = "o"
+    return METHOD_COLORS.get(method, FALLBACK_COLOR), marker
+
+
 def _plot_metric(ax, data: pd.DataFrame, mean: str, std: str, ylabel: str, log=False) -> None:
-    for index, method in enumerate(_methods(data)):
+    for method in _methods(data):
         subset = data[data["experiment"] == method].sort_values("missing_rate")
         x = subset["missing_rate"].to_numpy(dtype=float) * 100
         y = subset[mean].to_numpy(dtype=float)
         spread = subset[std].fillna(0).to_numpy(dtype=float)
-        color = PALETTE[index % len(PALETTE)]
-        ax.plot(x, y, color=color, marker=MARKERS[index % len(MARKERS)], label=method, linewidth=1.8)
+        color, marker = _method_style(method)
+        ax.plot(x, y, color=color, marker=marker, label=method, linewidth=1.8)
         ax.fill_between(x, np.maximum(y - spread, 0), y + spread, color=color, alpha=0.14, linewidth=0)
     ax.set_xlabel("Missing values (%)")
     ax.set_ylabel(ylabel)
@@ -80,9 +102,24 @@ def plot_dataset(data: pd.DataFrame, dataset: str, output: Path) -> None:
     save_figure(fig, output, f"{dataset.lower().replace(' ', '_')}_benchmark")
 
 
+def _common_datasets(data: pd.DataFrame) -> list[str]:
+    """Return datasets for which every method has benchmark results."""
+    methods = data["experiment"].astype(str).nunique()
+    coverage = data[["experiment", "dataset"]].drop_duplicates()
+    counts = coverage.groupby("dataset", dropna=False)["experiment"].nunique()
+    return sorted(counts[counts == methods].index.astype(str))
+
+
 def plot_overview(data: pd.DataFrame, output: Path) -> None:
-    """Show accuracy/runtime trade-off, averaged by method and dataset."""
-    view = data.dropna(subset=["numerical_nrmse_mean", "total_seconds_median"]).copy()
+    """Show the trade-off using only datasets completed by every method."""
+    common_datasets = _common_datasets(data)
+    if not common_datasets:
+        print("Skipping overview: no dataset was run by every method")
+        return
+
+    view = data[data["dataset"].isin(common_datasets)].dropna(
+        subset=["numerical_nrmse_mean", "total_seconds_median"]
+    ).copy()
     if view.empty:
         return
     aggregated = view.groupby("experiment", as_index=False).agg(
@@ -90,17 +127,27 @@ def plot_overview(data: pd.DataFrame, output: Path) -> None:
         runtime=("total_seconds_median", "median"),
     )
     fig, ax = plt.subplots(figsize=(4.8, 3.6))
-    for index, row in aggregated.iterrows():
-        color = PALETTE[index % len(PALETTE)]
-        ax.scatter(row["runtime"], row["numerical_nrmse"], s=48, color=color, marker=MARKERS[index % len(MARKERS)])
-        ax.annotate(str(row["experiment"]), (row["runtime"], row["numerical_nrmse"]), xytext=(5, 4), textcoords="offset points")
+    for _, row in aggregated.iterrows():
+        method = str(row["experiment"])
+        color, marker = _method_style(method)
+        ax.scatter(
+            row["runtime"], row["numerical_nrmse"],
+            s=48, color=color, marker=marker,
+        )
+        ax.annotate(
+            method, (row["runtime"], row["numerical_nrmse"]),
+            xytext=(5, 4), textcoords="offset points",
+        )
     ax.set_xscale("log")
     ax.set_xlabel("Median fit + transform time (s, log scale)")
     ax.set_ylabel("Mean numerical NRMSE")
-    ax.set_title("Accuracy–runtime trade-off")
+    ax.set_title(
+        f"Accuracy–runtime trade-off ({len(common_datasets)} common datasets)"
+    )
     ax.grid(color="#d9d9d9", linewidth=0.6)
     fig.tight_layout()
     save_figure(fig, output, "accuracy_runtime_tradeoff")
+    print(f"Overview uses datasets shared by every method: {', '.join(common_datasets)}")
 
 
 def parse_args() -> argparse.Namespace:

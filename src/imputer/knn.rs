@@ -1,6 +1,6 @@
 use crate::utils::Errors::NotFitted;
-use crate::utils::{self, Errors, SendPtr, StringEncoding};
-use ndarray::{Array2, ArrayView1, ArrayView2};
+use crate::utils::{self, Errors, StringEncoding};
+use ndarray::{Array2, ArrayView1, ArrayView2, Axis};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes};
 use rayon::prelude::*;
@@ -205,15 +205,16 @@ impl KnnImputer {
         dist: fn(&KnnImputer, ArrayView1<f64>, ArrayView1<f64>) -> f64,
     ) -> Result<Array2<f64>, utils::Errors> {
         let mut imputed = data.to_owned();
-        let imp_ptr = std::sync::Arc::new(SendPtr(imputed.as_mut_ptr()));
         let base = self.data.as_ref().ok_or(utils::Errors::NotFitted)?;
-        let res: Result<(), Errors> = (0..data.nrows())
+        let res: Result<(), Errors> = imputed
+            .axis_iter_mut(Axis(0))
             .into_par_iter()
-            .map(|row| {
+            .enumerate()
+            .map(|(nrow, mut row)| {
                 let cols: Vec<usize> = (0..base.ncols())
-                    .filter(|&j| data[(row, j)].is_nan())
+                    .filter(|&j| data[(nrow, j)].is_nan())
                     .collect();
-                let p = data.row(row);
+                let p = data.row(nrow);
                 let distances: Vec<f64> = (0..base.nrows())
                     .into_par_iter()
                     .map(|r| dist(&self, p, base.row(r)))
@@ -226,9 +227,7 @@ impl KnnImputer {
                 });
                 let avgs = self.average(&indices, &cols, &self.get_weights(&distances))?;
                 for (avg, c) in avgs.into_iter().zip(&cols) {
-                    unsafe {
-                        *imp_ptr.0.add(row * base.ncols() + c) = avg;
-                    }
+                    row[*c] = avg;
                 }
                 Ok(())
             })
