@@ -170,8 +170,10 @@ class Experiment:
             LOGGER.info(f"[{self.name}] {dataset_name}")
             for rate in self.params["missing_rates"]:
                 LOGGER.info(f"[{self.name}] Missing Rate: {rate} START")
+                total_seeds = len(self.params["seeds"])
+                LOGGER.info(f"[{self.name}] Number of total Seed: {total_seeds}")
                 for seed_count, seed in enumerate(self.params["seeds"]):
-                    LOGGER.info(f"[{self.name}] Seed: {seed_count} START")
+                    LOGGER.info(f"[{self.name}] Seed: {seed_count}/{total_seeds} START")
                     missing, mask = self.make_missing(
                         ground_truth, float(rate), int(seed))
                     for _ in range(int(self.params.get("n_warmups", 1))):
@@ -216,7 +218,7 @@ class Experiment:
                             "total_seconds": fit_s + transform_s,
                             **metrics,
                         })
-                    LOGGER.info(f"[{self.name}] Seed: {seed_count} DONE")
+                    LOGGER.info(f"[{self.name}] Seed: {seed_count}/{total_seeds} DONE")
                 LOGGER.info(f"[{self.name}] Missing Rate: {rate} DONE")
         return pd.DataFrame(rows)
 
