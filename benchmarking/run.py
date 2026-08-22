@@ -372,6 +372,7 @@ def main() -> None:
         df = exp.run()
         df.to_csv(f"{args.output}/{exp.name}.csv")
         frames.append(df)
+        LOGGER.info(f"[{exp.name}] Finished!")
     raw = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     if raw.empty:
         raise RuntimeError("No benchmark observations were produced")
