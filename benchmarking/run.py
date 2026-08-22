@@ -172,7 +172,7 @@ class Experiment:
                 LOGGER.info(f"[{self.name}] Missing Rate: {rate}")
                 total_seeds = len(self.params["seeds"])
                 # LOGGER.info(f"[{self.name}] Number of total Seed: {total_seeds}")
-                for seed_count, seed in enumerate(self.params["seeds"]):
+                for seed_count, seed in enumerate(self.params["seeds"], start=1):
                     LOGGER.info(f"[{self.name}] Seed: {seed_count}/{total_seeds}")
                     missing, mask = self.make_missing(
                         ground_truth, float(rate), int(seed))
