@@ -1,5 +1,5 @@
-use crate::utils::Errors;
 use crate::utils::{self, StringEncoding, arr_to_out, pyany_to_vec};
+use crate::utils::{Errors, SendPtr};
 use ndarray::{Array2, ArrayView1, ArrayView2, Axis};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes};
@@ -137,9 +137,14 @@ impl SimpleImputer {
             .axis_iter_mut(Axis(0))
             .into_par_iter()
             .for_each(|mut row| {
-                (0..data.ncols()).into_iter().for_each(|col| {
+                let ptr = std::sync::Arc::new(SendPtr(row.as_mut_ptr()));
+                let stride = row.strides()[0];
+                (0..data.ncols()).into_par_iter().for_each(|col| {
                     if row[col].is_nan() {
-                        row[col] = means[col];
+                        unsafe {
+                            *ptr.0.offset(col as isize * stride) = means[col];
+                        }
+                        //     row[col] = means[col];
                     }
                 })
             });
