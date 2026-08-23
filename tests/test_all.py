@@ -62,6 +62,39 @@ class TestInputValidity:
         print(f"imputed:\n{imputed}")
         assert not imputed.isna().any().any(), "Imputed still has missing values"
 
+    @pytest.mark.parametrize("model", Imputers)
+    def test_observed_values_stay_unchanged_for_fortran_contiguous_dataframe(self, model):
+        data = pd.DataFrame(
+            np.asfortranarray([
+                [5.1, 3.5, 1.4, 0.2],
+                [4.9, 3.0, 1.4, 0.2],
+                [4.7, 3.2, 1.3, 0.2],
+                [4.6, 3.1, 1.5, 0.2],
+                [5.0, 3.6, 1.4, 0.2],
+                [5.4, 3.9, 1.7, 0.4],
+            ]),
+            columns=["sepal_length", "sepal_width", "petal_length", "petal_width"],
+        )
+        missing = data.copy()
+        missing.iloc[1, 0] = np.nan
+        missing.iloc[2, 1] = np.nan
+        missing.iloc[4, 2] = np.nan
+        observed = missing.notna().to_numpy()
+
+        assert missing.to_numpy(copy=False).flags.f_contiguous
+
+        imputed = model(
+            **param[model.__name__]
+        ).fit_transform(missing)
+
+        np.testing.assert_allclose(
+            imputed.to_numpy(dtype=float)[observed],
+            data.to_numpy(dtype=float)[observed],
+            rtol=1e-10,
+            atol=1e-12,
+            err_msg="MICE modified an observed value in a Fortran-contiguous DataFrame",
+        )
+
 
 class TestOutputValidity:
     @pytest.mark.parametrize("model", Imputers)

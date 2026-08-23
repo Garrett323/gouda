@@ -118,6 +118,41 @@ def test_categoricals():
     assert (imputed.loc[data["a"] <= 0.2, "b"] == "b").sum() == 50
 
 
+@pytest.mark.parametrize("backend", ["linear", "pmm", "ridge"])
+def test_observed_values_stay_unchanged(backend):
+    data = pd.DataFrame({
+        "continuous": [0.1234567890123, 1.25, 2.5, 3.75, 5.0, 6.25],
+        "integer": [10, 20, 30, 40, 50, 60],
+        "category": ["a", "b", "a", "c", "b", "c"],
+    })
+    missing = data.copy()
+    missing.loc[1, "continuous"] = np.nan
+    missing.loc[3, "integer"] = np.nan
+    missing.loc[4, "category"] = pd.NA
+    observed = missing.notna()
+
+    imputed = Mice(max_iter=2, encoding="label", backend=backend).fit_transform(missing)
+
+    numeric = data.select_dtypes(include="number").columns
+    numeric_observed = observed[numeric].to_numpy()
+    np.testing.assert_allclose(
+        imputed[numeric].to_numpy(dtype=float)[numeric_observed],
+        data[numeric].to_numpy(dtype=float)[numeric_observed],
+        rtol=1e-10,
+        atol=1e-12,
+        err_msg="MICE modified an observed numerical value",
+    )
+
+    categorical = data.select_dtypes(exclude="number").columns
+    categorical_observed = observed[categorical].to_numpy()
+    np.testing.assert_array_equal(
+        imputed[categorical].to_numpy()[categorical_observed],
+        data[categorical].to_numpy()[categorical_observed],
+        err_msg="MICE modified an observed categorical value",
+    )
+
+
+
 def test_shape_mismatch():
     data = pd.read_csv("tests/resources/test.csv")
     print(data)
