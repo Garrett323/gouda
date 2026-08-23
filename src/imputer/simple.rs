@@ -1,6 +1,6 @@
-use crate::utils::{self, StringEncoding, arr_to_out, pyany_to_vec};
+use crate::utils::{self, arr_to_out, pyany_to_vec, StringEncoding};
 use crate::utils::{Errors, SendPtr};
-use ndarray::{Array2, ArrayView1, ArrayView2, Axis};
+use ndarray::{Array2, ArrayView1, ArrayView2, ArrayViewMut1, Axis};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes};
 // use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
@@ -133,21 +133,27 @@ impl SimpleImputer {
     pub fn impute(&self, data: ArrayView2<f64>) -> Result<Array2<f64>, Errors> {
         let means = self.sample_means.as_ref().ok_or(Errors::NotFitted)?;
         let mut imputed = data.to_owned();
-        imputed
-            .axis_iter_mut(Axis(0))
-            .into_par_iter()
-            .for_each(|mut row| {
-                let ptr = std::sync::Arc::new(SendPtr(row.as_mut_ptr()));
-                let stride = row.strides()[0];
-                (0..data.ncols()).into_par_iter().for_each(|col| {
-                    if row[col].is_nan() {
-                        unsafe {
-                            *ptr.0.offset(col as isize * stride) = means[col];
-                        }
-                        //     row[col] = means[col];
+
+        let process_row = |mut row: ArrayViewMut1<f64>| {
+            let ptr = std::sync::Arc::new(SendPtr(row.as_mut_ptr()));
+            let stride = row.strides()[0];
+            (0..data.ncols()).into_iter().for_each(|col| {
+                if row[col].is_nan() {
+                    unsafe {
+                        *ptr.0.offset(col as isize * stride) = means[col];
                     }
-                })
-            });
+                }
+            })
+        };
+        imputed.axis_iter_mut(Axis(0));
+        if data.nrows() > utils::constants::SIMPLE_THREADING_CUTOFF {
+            imputed
+                .axis_iter_mut(Axis(0))
+                .into_par_iter()
+                .for_each(process_row);
+        } else {
+            imputed.axis_iter_mut(Axis(0)).for_each(process_row);
+        };
         Ok(imputed)
     }
 }
