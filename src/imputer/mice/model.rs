@@ -207,17 +207,18 @@ fn update_imputed(
     predictions: Vec<Array1<f64>>,
     missing_percolumn: Vec<Vec<usize>>,
 ) {
-    let data_ptr = std::sync::Arc::new(SendPtr(data.as_mut_ptr()));
-    predictions
+    data.axis_iter_mut(Axis(1))
         .into_par_iter()
-        .zip(missing_percolumn)
-        .enumerate()
-        .for_each(|(j, (pred, miss_idx))| {
-            let ptr = std::sync::Arc::clone(&data_ptr);
-            for (k, v) in pred.iter().enumerate() {
-                unsafe {
-                    *ptr.0.add(miss_idx[k] * data.ncols() + j) = *v;
-                }
+        .zip(
+            predictions
+                .into_par_iter()
+                .zip(missing_percolumn.into_par_iter()),
+        )
+        .for_each(|(mut column, (prediction, missing_rows))| {
+            assert_eq!(prediction.len(), missing_rows.len());
+
+            for (&row, &value) in missing_rows.iter().zip(prediction.iter()) {
+                column[row] = value;
             }
         });
 }
