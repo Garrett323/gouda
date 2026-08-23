@@ -134,13 +134,12 @@ impl SimpleImputer {
         let means = self.sample_means.as_ref().ok_or(Errors::NotFitted)?;
         let mut imputed = data.to_owned();
         imputed
-            .axis_iter_mut(Axis(1))
+            .axis_iter_mut(Axis(0))
             .into_par_iter()
-            .enumerate()
-            .for_each(|(ncol, mut col)| {
-                (0..data.nrows()).into_iter().for_each(|row| {
-                    if col[row].is_nan() {
-                        col[row] = means[ncol];
+            .for_each(|mut row| {
+                (0..data.ncols()).into_iter().for_each(|col| {
+                    if row[col].is_nan() {
+                        row[col] = means[col];
                     }
                 })
             });
