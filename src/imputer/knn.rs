@@ -125,17 +125,20 @@ impl KnnImputer {
         let (arr, out, enc) = utils::pyany_to_vec(data, &self.string_encoding)?;
         // actual method
         utils::check_feature_mismatch(self.data.as_ref().ok_or(NotFitted)?.ncols(), arr.ncols())?;
-        let dist = match self.metric {
-            Metrics::NanEuclid => Self::nan_euclid,
-            Metrics::ExpectedDistance => Self::expected_distance,
+        let imputed: Result<Array2<f64>, utils::Errors> = match &self.metric {
+            Metrics::NanEuclid => self.brute_force(arr.view(), nan_euclid),
+            Metrics::ExpectedDistance => self.brute_force(arr.view(), expected_distance),
             Metrics::Gower(None) => {
                 return Err(Errors::NotFitted.into());
             }
-            Metrics::Gower(Some(_)) => Self::gower,
+            Metrics::Gower(Some(ranges)) => {
+                let cat_cols = self.cat_cols.as_ref().ok_or(Errors::NotFitted)?;
+                let num_cols = self.num_cols.as_ref().ok_or(Errors::NotFitted)?;
+                self.brute_force(arr.view(), |a, b| gower(a, b, ranges, cat_cols, num_cols))
+            }
         };
-        let imputed = self.brute_force(arr.view(), dist)?;
         // return python object
-        utils::arr_to_out(py, &imputed, out, enc.as_ref())
+        utils::arr_to_out(py, &imputed?, out, enc.as_ref())
     }
 
     pub fn fit_transform<'py>(
@@ -199,11 +202,10 @@ impl KnnImputer {
 }
 
 impl KnnImputer {
-    fn brute_force(
-        &self,
-        data: ArrayView2<f64>,
-        dist: fn(&KnnImputer, ArrayView1<f64>, ArrayView1<f64>) -> f64,
-    ) -> Result<Array2<f64>, utils::Errors> {
+    fn brute_force<D>(&self, data: ArrayView2<f64>, dist: D) -> Result<Array2<f64>, utils::Errors>
+    where
+        D: Fn(ArrayView1<f64>, ArrayView1<f64>) -> f64 + Sync,
+    {
         let mut imputed = data.to_owned();
         let base = self.data.as_ref().ok_or(utils::Errors::NotFitted)?;
         let res: Result<(), Errors> = imputed
@@ -218,21 +220,14 @@ impl KnnImputer {
                     return Ok(());
                 }
 
-                let candidates: Vec<usize> = (0..base.nrows())
+                let p = data.row(nrow);
+                let mut neighbors: Vec<(usize, f64)> = (0..base.nrows())
                     .into_par_iter()
                     .filter(|&r| cols.iter().any(|&c| !base[(r, c)].is_nan()))
-                    .collect();
-                if candidates.is_empty() {
-                    return Ok(());
-                }
-
-                let p = data.row(nrow);
-                let mut neighbors: Vec<(usize, f64)> = candidates
-                    .into_par_iter()
-                    .map(|r| (r, dist(self, p, base.row(r))))
+                    .map(|r| (r, dist(p, base.row(r))))
                     .collect();
                 neighbors.par_sort_unstable_by(|a, b| a.1.total_cmp(&b.1));
-                let avgs = self.average(&neighbors, &cols)?;
+                let avgs = self.average(base.view(), &neighbors, &cols)?;
                 for (avg, c) in avgs.into_iter().zip(&cols) {
                     row[*c] = avg;
                 }
@@ -243,8 +238,12 @@ impl KnnImputer {
         Ok(imputed)
     }
 
-    fn average(&self, neighbors: &[(usize, f64)], cols: &[usize]) -> Result<Vec<f64>, Errors> {
-        let base = self.data.as_ref().ok_or(NotFitted)?;
+    fn average(
+        &self,
+        base: ArrayView2<f64>,
+        neighbors: &[(usize, f64)],
+        cols: &[usize],
+    ) -> Result<Vec<f64>, Errors> {
         let avg = |&c: &usize| {
             let mut count = 0;
             let mut avg = 0.0;
@@ -303,79 +302,77 @@ impl KnnImputer {
 }
 
 // Distance Functions
-impl KnnImputer {
-    fn nan_euclid(&self, a: ArrayView1<f64>, b: ArrayView1<f64>) -> f64 {
-        let mut total = 0.0;
-        let mut valid = 0;
-        let ncols = a.len();
-        for i in 0..ncols {
-            let (x, y) = unsafe { (a.uget(i), b.uget(i)) };
-            if !(x.is_nan() || y.is_nan()) {
+fn nan_euclid(a: ArrayView1<f64>, b: ArrayView1<f64>) -> f64 {
+    let mut total = 0.0;
+    let mut valid = 0;
+    let ncols = a.len();
+    for i in 0..ncols {
+        let (x, y) = unsafe { (a.uget(i), b.uget(i)) };
+        if !(x.is_nan() || y.is_nan()) {
+            let d = x - y;
+            total += d * d;
+            valid += 1;
+        }
+    }
+    if valid == 0 {
+        return f64::INFINITY;
+    }
+    total * (ncols as f64 / valid as f64)
+}
+
+fn expected_distance(a: ArrayView1<f64>, b: ArrayView1<f64>) -> f64 {
+    let mut total = 0.0;
+    let mut total_obs = 0.0;
+    let ncols = a.len();
+    for i in 0..ncols {
+        let (x, y) = unsafe { (a.uget(i), b.uget(i)) };
+        match (x.is_nan(), y.is_nan()) {
+            (true, true) => total += 0.333,
+            (true, false) => total += y.max(1.0 - y),
+            (false, true) => total += x.max(1.0 - x),
+            (false, false) => {
                 let d = x - y;
-                total += d * d;
-                valid += 1;
+                total_obs += d * d
             }
         }
-        if valid == 0 {
-            return f64::INFINITY;
-        }
-        total * (ncols as f64 / valid as f64)
     }
+    total + total_obs.sqrt()
+}
 
-    fn expected_distance(&self, a: ArrayView1<f64>, b: ArrayView1<f64>) -> f64 {
-        let mut total = 0.0;
-        let mut total_obs = 0.0;
-        let ncols = a.len();
-        for i in 0..ncols {
-            let (x, y) = unsafe { (a.uget(i), b.uget(i)) };
-            match (x.is_nan(), y.is_nan()) {
-                (true, true) => total += 0.333,
-                (true, false) => total += y.max(1.0 - y),
-                (false, true) => total += x.max(1.0 - x),
-                (false, false) => {
-                    let d = x - y;
-                    total_obs += d * d
-                }
-            }
+fn gower(
+    a: ArrayView1<f64>,
+    b: ArrayView1<f64>,
+    ranges: &[f64],
+    cat_cols: &[usize],
+    num_cols: &[usize],
+) -> f64 {
+    // These panics are intentional; it should not be possible to trigger this from the api
+    let mut total = 0.0;
+    let mut valid = 0;
+    for &i in cat_cols {
+        let (x, y) = unsafe { (a.uget(i), b.uget(i)) };
+        if !(x.is_nan() || y.is_nan()) {
+            // total += (x - y).abs().min(1.0);
+            total += if x == y { 0.0 } else { 1.0 };
+            valid += 1;
         }
-        total + total_obs.sqrt()
     }
-
-    fn gower(&self, a: ArrayView1<f64>, b: ArrayView1<f64>) -> f64 {
-        // These panics are intentional; it should not be possible to trigger this from the api
-        let ranges = if let Metrics::Gower(v) = &self.metric {
-            v.as_ref()
-                .expect("Make sure to call fit first, or provide ranges any other way!")
-                .as_slice()
-        } else {
-            panic!("Set distance to gower when calling gower!");
+    for &i in num_cols {
+        let (x, y) = unsafe {
+            (
+                a.uget(i) / ranges.get_unchecked(i),
+                b.uget(i) / ranges.get_unchecked(i),
+            )
         };
-        let mut total = 0.0;
-        let mut valid = 0;
-        for &i in self.cat_cols.as_ref().unwrap() {
-            let (x, y) = unsafe { (a.uget(i), b.uget(i)) };
-            if !(x.is_nan() || y.is_nan()) {
-                total += (x - y).abs().min(1.0);
-                valid += 1;
-            }
+        if !(x.is_nan() || y.is_nan()) {
+            total += (x - y).abs();
+            valid += 1;
         }
-        for &i in self.num_cols.as_ref().unwrap() {
-            let (x, y) = unsafe {
-                (
-                    a.uget(i) / ranges.get_unchecked(i),
-                    b.uget(i) / ranges.get_unchecked(i),
-                )
-            };
-            if !(x.is_nan() || y.is_nan()) {
-                total += (x - y).abs();
-                valid += 1;
-            }
-        }
-        if valid == 0 {
-            f64::INFINITY
-        } else {
-            total / valid as f64
-        }
+    }
+    if valid == 0 {
+        f64::INFINITY
+    } else {
+        total / valid as f64
     }
 }
 
@@ -393,19 +390,36 @@ mod tests {
         // With distances 1 and 3, the weighted mean is:
         // (10 / 1 + 20 / 3) / (1 / 1 + 1 / 3) = 12.5.
         let neighbors = [(0, 1.0), (1, 3.0)];
-        let actual = knn.average(&neighbors, &[0]).unwrap()[0];
+        let actual = knn
+            .average(knn.data.as_ref().unwrap().view(), &neighbors, &[0])
+            .unwrap()[0];
 
         assert!((actual - 12.5).abs() < 1e-12, "actual: {actual}");
     }
 
     #[test]
-    fn gower() {
+    fn test_gower() {
+        let mut knn = KnnImputer::new(5, "gower", "uniform", Some("label")).unwrap();
         // gower is same as nan_euclid for numeric only
-        let knn = KnnImputer::new(5, "gower", "uniform", Some("label")).unwrap();
+        let train = Array2::from_shape_vec(
+            [POINTS_EUCLID.len(), 5],
+            POINTS_EUCLID.iter().flatten().copied().collect(),
+        )
+        .unwrap();
+
+        let ranges = knn.span(train.view());
+        knn.cat_cols = Some(vec![]);
+        knn.num_cols = Some((0..5).collect());
         let p = &[f64::NAN, 0.22129885, 0.8863533, 0.50595314, 0.5011135];
 
-        for (e, q) in EXPECTED_EUCLID.iter().zip(POINTS_EUCLID) {
-            let result = knn.nan_euclid(p.into(), q.into()).sqrt();
+        for (e, q) in EXPECTED_GOWER.iter().zip(POINTS_EUCLID) {
+            let result = gower(
+                p.into(),
+                q.into(),
+                &ranges,
+                &knn.cat_cols.as_ref().unwrap(),
+                &knn.num_cols.as_ref().unwrap(),
+            );
             assert!(
                 (result - e).abs() < 1e-7,
                 "Expected: {}; Actual: {}",
@@ -416,12 +430,11 @@ mod tests {
     }
 
     #[test]
-    fn nan_euclid() {
-        let knn = KnnImputer::new(5, "nan_euclid", "uniform", None).unwrap();
+    fn test_nan_euclid() {
         let p = &[f64::NAN, 0.22129885, 0.8863533, 0.50595314, 0.5011135];
 
         for (e, q) in EXPECTED_EUCLID.iter().zip(POINTS_EUCLID) {
-            let result = knn.nan_euclid(p.into(), q.into()).sqrt();
+            let result = nan_euclid(p.into(), q.into()).sqrt();
             assert!(
                 (result - e).abs() < 1e-7,
                 "Expected: {}; Actual: {}",
@@ -431,7 +444,7 @@ mod tests {
         }
     }
     #[test]
-    fn expected_distance() {
+    fn test_expected_distance() {
         let p = &[f64::NAN, 0.555556, f64::NAN, 0.555556];
         let points = &[
             [0.0, 0.777778, 0.0, 0.777778],
@@ -453,9 +466,9 @@ mod tests {
             1.777112,
             0.666,
         ];
-        let knn = KnnImputer::new(5, "expected_distance", "uniform", None).unwrap();
+        // let knn = KnnImputer::new(5, "expected_distance", "uniform", None).unwrap();
         for (e, q) in expected.iter().zip(points) {
-            let result = knn.expected_distance(
+            let result = expected_distance(
                 Array1::from_vec(p.to_vec()).view(),
                 Array1::from_vec(q.to_vec()).view(),
             );
@@ -470,15 +483,13 @@ mod tests {
 
     #[test]
     fn compare() {
-        let knn = KnnImputer::new(5, "nan_euclid", "uniform", None).unwrap();
         let (a, b) = (&[1.0, 2.0], &[3.0, 4.0]);
-        let diff = knn
-            .nan_euclid(
-                Array1::from_vec(a.to_vec()).view(),
-                Array1::from_vec(b.to_vec()).view(),
-            )
-            .sqrt()
-            - knn.expected_distance(
+        let diff = nan_euclid(
+            Array1::from_vec(a.to_vec()).view(),
+            Array1::from_vec(b.to_vec()).view(),
+        )
+        .sqrt()
+            - expected_distance(
                 Array1::from_vec(a.to_vec()).view(),
                 Array1::from_vec(b.to_vec()).view(),
             );
@@ -486,14 +497,13 @@ mod tests {
 
         let (a, b) = (&[1.0, f64::NAN], &[3.0, f64::NAN]);
         // 2.8284271247461903
-        let euclid = knn
-            .nan_euclid(
-                Array1::from_vec(a.to_vec()).view(),
-                Array1::from_vec(b.to_vec()).view(),
-            )
-            .sqrt();
+        let euclid = nan_euclid(
+            Array1::from_vec(a.to_vec()).view(),
+            Array1::from_vec(b.to_vec()).view(),
+        )
+        .sqrt();
         // 2 + 1/3
-        let ed = knn.expected_distance(
+        let ed = expected_distance(
             Array1::from_vec(a.to_vec()).view(),
             Array1::from_vec(b.to_vec()).view(),
         );
@@ -528,5 +538,17 @@ mod tests {
         0.7077017509263522,
         1.042753531574897,
         0.8646734303095986,
+    ];
+
+    const EXPECTED_GOWER: &[f64] = &[
+        0.8074396249732037,
+        0.46796509112089085,
+        0.0,
+        0.2770944551042174,
+        0.49666980523195914,
+        0.16298231711637567,
+        0.43765590083192635,
+        0.6393675528933603,
+        0.581755451636246,
     ];
 }
