@@ -214,18 +214,25 @@ impl KnnImputer {
                 let cols: Vec<usize> = (0..base.ncols())
                     .filter(|&j| data[(nrow, j)].is_nan())
                     .collect();
-                let p = data.row(nrow);
-                let distances: Vec<f64> = (0..base.nrows())
+                if cols.is_empty() {
+                    return Ok(());
+                }
+
+                let candidates: Vec<usize> = (0..base.nrows())
                     .into_par_iter()
-                    .map(|r| dist(&self, p, base.row(r)))
+                    .filter(|&r| cols.iter().any(|&c| !base[(r, c)].is_nan()))
                     .collect();
-                let mut indices: Vec<_> = (0..base.nrows()).collect();
-                indices.par_sort_unstable_by(|&a, &b| unsafe {
-                    distances
-                        .get_unchecked(a)
-                        .total_cmp(&distances.get_unchecked(b))
-                });
-                let avgs = self.average(&indices, &cols, &self.get_weights(&distances))?;
+                if candidates.is_empty() {
+                    return Ok(());
+                }
+
+                let p = data.row(nrow);
+                let mut neighbors: Vec<(usize, f64)> = candidates
+                    .into_par_iter()
+                    .map(|r| (r, dist(self, p, base.row(r))))
+                    .collect();
+                neighbors.par_sort_unstable_by(|a, b| a.1.total_cmp(&b.1));
+                let avgs = self.average(&neighbors, &cols)?;
                 for (avg, c) in avgs.into_iter().zip(&cols) {
                     row[*c] = avg;
                 }
@@ -236,23 +243,18 @@ impl KnnImputer {
         Ok(imputed)
     }
 
-    fn average(
-        &self,
-        indices: &[usize],
-        cols: &[usize],
-        weights: &[f64],
-    ) -> Result<Vec<f64>, Errors> {
+    fn average(&self, neighbors: &[(usize, f64)], cols: &[usize]) -> Result<Vec<f64>, Errors> {
         let base = self.data.as_ref().ok_or(NotFitted)?;
         let avg = |&c: &usize| {
             let mut count = 0;
             let mut avg = 0.0;
             let mut weight_sum = 0.0;
-            for &i in indices {
+            for &(i, distance) in neighbors {
                 let val = unsafe { *base.row(i).uget(c) };
                 if val.is_nan() {
                     continue;
                 }
-                let weight = unsafe { weights.get_unchecked(i) };
+                let weight = self.weight(distance);
                 avg += val * weight;
                 weight_sum += weight;
                 count += 1;
@@ -273,13 +275,10 @@ impl KnnImputer {
         }
     }
 
-    fn get_weights(&self, distances: &[f64]) -> Vec<f64> {
+    fn weight(&self, distance: f64) -> f64 {
         match self.weights {
-            Weights::Uniform => vec![1.0; distances.len()],
-            Weights::Distance => distances
-                .iter()
-                .map(|d| 1.0 / d.max(f64::EPSILON))
-                .collect(),
+            Weights::Uniform => 1.0,
+            Weights::Distance => 1.0 / distance.max(f64::EPSILON),
         }
     }
 
@@ -393,10 +392,8 @@ mod tests {
 
         // With distances 1 and 3, the weighted mean is:
         // (10 / 1 + 20 / 3) / (1 / 1 + 1 / 3) = 12.5.
-        let distances = [1.0, 3.0];
-        let actual = knn
-            .average(&[0, 1], &[0], &knn.get_weights(&distances))
-            .unwrap()[0];
+        let neighbors = [(0, 1.0), (1, 3.0)];
+        let actual = knn.average(&neighbors, &[0]).unwrap()[0];
 
         assert!((actual - 12.5).abs() < 1e-12, "actual: {actual}");
     }
