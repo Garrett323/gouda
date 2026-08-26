@@ -1,9 +1,8 @@
-use crate::utils::{self, arr_to_out, pyany_to_vec, StringEncoding};
-use crate::utils::{Errors, SendPtr};
+use crate::utils::Errors;
+use crate::utils::{self, StringEncoding, arr_to_out, pyany_to_vec};
 use ndarray::{Array2, ArrayView1, ArrayView2, ArrayViewMut1, Axis};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes};
-// use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -12,7 +11,6 @@ use std::collections::HashMap;
 #[derive(Serialize, Deserialize)]
 pub struct SimpleImputer {
     sample_means: Option<Vec<f64>>,
-    // sample_mode: Option<Vec<f64>>,// needed when implementing categoricals
     string_encoding: Option<StringEncoding>,
     is_fitted: bool,
 }
@@ -135,13 +133,10 @@ impl SimpleImputer {
         let mut imputed = data.to_owned();
 
         let process_row = |mut row: ArrayViewMut1<f64>| {
-            let ptr = std::sync::Arc::new(SendPtr(row.as_mut_ptr()));
-            let stride = row.strides()[0];
-            (0..data.ncols()).into_iter().for_each(|col| {
-                if row[col].is_nan() {
-                    unsafe {
-                        *ptr.0.offset(col as isize * stride) = means[col];
-                    }
+            (0..data.ncols()).into_iter().for_each(|col| unsafe {
+                let v = row.uget_mut(col);
+                if v.is_nan() {
+                    *v = *means.get_unchecked(col);
                 }
             })
         };

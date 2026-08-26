@@ -30,3 +30,11 @@ ndarray-linalg = { version = "0.18.1", features = ["intel-mkl"] }
 [target.'cfg(not(windows))'.dependencies]
 openblas-src = "0.10.16"
 ndarray-linalg = { version = "0.18.1", features = ["openblas"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units=1
+strip="symbols"
+debug=0
+incremental=false
