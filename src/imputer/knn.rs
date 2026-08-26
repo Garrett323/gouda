@@ -219,12 +219,10 @@ impl KnnImputer {
                 if cols.is_empty() {
                     return Ok(());
                 }
-
-                let p = data.row(nrow);
                 let mut neighbors: Vec<(usize, f64)> = (0..base.nrows())
                     .into_par_iter()
                     .filter(|&r| cols.iter().any(|&c| !base[(r, c)].is_nan()))
-                    .map(|r| (r, dist(p, base.row(r))))
+                    .map(|r| (r, dist(row.view(), base.row(r))))
                     .collect();
                 neighbors.par_sort_unstable_by(|a, b| a.1.total_cmp(&b.1));
                 let avgs = self.average(base.view(), &neighbors, &cols)?;
