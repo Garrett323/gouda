@@ -6,11 +6,10 @@ Designed for mixed-type datasets with missing values, including categorical feat
 
 ## Features
 
-- 🚀 Rust-powered performance
-- ✅ Fully scikit-learn compatible (`fit`, `transform`, `fit_transform`)
-- 🐼 Supports NumPy arrays and pandas DataFrames
-- 🏷️ Native support for categorical features
-- 💾 Pickle compatible
+- Fully scikit-learn compatible (`fit`, `transform`, `fit_transform`)
+- Supports NumPy arrays and pandas DataFrames
+- Native support for categorical features
+- Pickle compatible
 
 ## Installation
 
