@@ -6,7 +6,6 @@ and `fit_transform` methods. It accepts NumPy arrays and pandas DataFrames and
 can label-encode mixed numerical/categorical DataFrames.
 
 ## Requirements and installation
-
 Gouda requires Python 3.11 or newer.
 
 ```bash
@@ -52,7 +51,6 @@ X_transformed = pipeline.fit_transform(X)
 ```
 
 ## Mixed-type DataFrames
-
 Pass `encoding="label"` to encode string or categorical columns during 
 imputation and decode them in the returned DataFrame. KNN should use the Gower
 metric for mixed data.
@@ -135,3 +133,22 @@ Run the complete Python suite, including timing-heavy tests, with
 
 Benchmarking has its own reproducibility and plotting guide in
 [`benchmarking/README.md`](benchmarking/README.md).
+Gouda provides high-performance, sklearn-compatible imputers with first-class support for mixed numerical and categorical data.
+
+## Citation
+
+If you use this software in your research, please cite it:
+
+```bibtex
+@software{kochs_2026_gouda,
+  author    = {Kochs, Tim},
+  title     = {Gouda},
+  year      = {2026},
+  version   = {0.1.0},
+  publisher = {Zenodo},
+  doi       = {10.5281/zenodo.1234567},
+  url       = {https://doi.org/10.5281/zenodo.1234567}
+}
+```
+
+You can also use the **"Cite this repository"** button on the GitHub sidebar.
