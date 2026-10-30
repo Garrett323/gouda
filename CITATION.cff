@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Gouda"
+authors:
+  - family-names: "Kochs"
+    given-names: "Tim"
+    orcid: "https://orcid.org/0009-0004-3504-7519"
+version: 1.0.0
+doi: 10.5281/zenodo.23806318
+date-released: 2026-10-30
+url: "https://github.com/Garrett323/gouda"
+license: AGPL-3.0-or-later
