@@ -148,7 +148,7 @@ If you use this software in your research, please cite it:
   publisher = {Zenodo},
   doi       = {10.5281/zenodo.1234567},
   url       = {https://doi.org/10.5281/zenodo.1234567},
-  howpublished = {\url{https://doi.org/10.5281/zenodo.1234567}},
+  howpublished = {\url{https://doi.org/10.5281/zenodo.23806318}},
 }
 ```
 
