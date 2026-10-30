@@ -52,7 +52,7 @@ Gouda provides high-performance, sklearn-compatible imputers with first-class su
 If you use this software in your research, please cite it:
 
 ```bibtex
-@software{kochs_2026_gouad,
+@software{kochs_2026_gouda,
   author    = {Kochs, Tim},
   title     = {Gouda},
   year      = {2026},
