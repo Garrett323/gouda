@@ -46,3 +46,21 @@ Most existing imputation libraries either:
 - limited selection of algorithms.
 
 Gouda provides high-performance, sklearn-compatible imputers with first-class support for mixed numerical and categorical data.
+
+## Citation
+
+If you use this software in your research, please cite it:
+
+```bibtex
+@software{kochs_2026_gouad,
+  author    = {Kochs, Tim},
+  title     = {Gouda},
+  year      = {2026},
+  version   = {0.1.0},
+  publisher = {Zenodo},
+  doi       = {10.5281/zenodo.1234567},
+  url       = {https://doi.org/10.5281/zenodo.1234567}
+}
+```
+
+You can also use the **"Cite this repository"** button on the GitHub sidebar.
